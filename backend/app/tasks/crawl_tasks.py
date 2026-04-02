@@ -14,8 +14,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.tasks.celery_app import celery_app
 
-# Synchronous DB engine for Celery workers
-_sync_db_url = settings.DATABASE_URL.replace("+asyncpg", "+psycopg2")
+# Synchronous DB engine for Celery workers — ensure psycopg2 driver
+_sync_db_url = settings.DATABASE_URL.replace("+asyncpg", "+psycopg2").replace("postgresql://", "postgresql+psycopg2://")
 _engine = create_engine(_sync_db_url, pool_pre_ping=True)
 
 

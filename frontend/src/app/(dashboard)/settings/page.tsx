@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { settingsApi, authApi, type LlmConfig, type User } from "@/lib/api";
 
 const PROVIDERS = [
+  { value: "volcengine", label: "火山方舟 (Doubao)", model: "ep-m-20260322064927-gvkkg" },
   { value: "deepseek", label: "DeepSeek", model: "deepseek-chat" },
   { value: "qwen", label: "通义千问 (Qwen)", model: "qwen-plus" },
   { value: "zhipu", label: "智谱 GLM", model: "glm-4-flash" },
@@ -14,9 +15,9 @@ export default function SettingsPage() {
   const [user, setUser] = useState<User | null>(null);
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
   const [llmForm, setLlmForm] = useState({
-    provider: "deepseek",
+    provider: "volcengine",
     api_key: "",
-    model_name: "deepseek-chat",
+    model_name: "ep-m-20260322064927-gvkkg",
     base_url: "",
   });
   const [llmError, setLlmError] = useState("");
@@ -132,7 +133,7 @@ export default function SettingsPage() {
               value={llmForm.api_key}
               onChange={(e) => setLlmForm({ ...llmForm, api_key: e.target.value })}
               className="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder={llmConfig ? "输入新密钥以更新" : "sk-..."}
+              placeholder={llmConfig ? "输入新密钥以更新" : "粘贴 API Key"}
             />
           </div>
           <div>

@@ -9,7 +9,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Request failed");
+    const detail = err.detail;
+    const message = Array.isArray(detail)
+      ? detail.map((e: any) => e.msg || JSON.stringify(e)).join("; ")
+      : (typeof detail === "string" ? detail : "Request failed");
+    throw new Error(message);
   }
 
   if (res.status === 204) return undefined as T;
@@ -38,7 +42,7 @@ export const authApi = {
 // ── Sources ───────────────────────────────────────────────────────────────────
 export const sourcesApi = {
   list: () => request<Source[]>("/sources"),
-  create: (data: { name: string; url: string; source_type: string }) =>
+  create: (data: { name: string; url?: string; search_query?: string; source_type: string }) =>
     request<Source>("/sources", { method: "POST", body: JSON.stringify(data) }),
   update: (id: string, data: Partial<Source>) =>
     request<Source>(`/sources/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
@@ -96,6 +100,7 @@ export interface Source {
   id: string;
   name: string;
   url: string;
+  search_query: string | null;
   source_type: string;
   is_active: boolean;
   crawl_interval_hours: number;

@@ -1,4 +1,5 @@
 import uuid
+import urllib.parse
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -12,6 +13,12 @@ from app.schemas.source import SourceCreate, SourceUpdate, SourceResponse, Sourc
 router = APIRouter(prefix="/sources", tags=["sources"])
 
 MAX_SOURCES_PER_USER = 20
+
+
+def _build_search_url(query: str) -> str:
+    """Build Google News RSS URL from a search query."""
+    q = urllib.parse.quote(query)
+    return f"https://news.google.com/rss/search?q={q}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
 
 
 @router.get("", response_model=list[SourceResponse])
@@ -35,10 +42,18 @@ async def create_source(
     if len(count_result.scalars().all()) >= MAX_SOURCES_PER_USER:
         raise HTTPException(status_code=400, detail=f"Maximum {MAX_SOURCES_PER_USER} sources allowed")
 
+    if data.source_type == "search":
+        url = _build_search_url(data.search_query)
+        search_query = data.search_query.strip()
+    else:
+        url = str(data.url)
+        search_query = None
+
     source = Source(
         user_id=current_user.id,
         name=data.name,
-        url=str(data.url),
+        url=url,
+        search_query=search_query,
         source_type=data.source_type,
         crawl_interval_hours=data.crawl_interval_hours,
     )
@@ -54,8 +69,7 @@ async def get_source(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    source = await _get_owned_source(source_id, current_user.id, db)
-    return source
+    return await _get_owned_source(source_id, current_user.id, db)
 
 
 @router.patch("/{source_id}", response_model=SourceResponse)

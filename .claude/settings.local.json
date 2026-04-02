@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker exec:*)",
+      "Bash(docker info:*)",
+      "Bash(nslookup ark.volcengineapi.com)",
+      "Bash(nslookup ark.volcengineapi.com 114.114.114.114)",
+      "Bash(nslookup ark.volcengineapi.com 223.5.5.5)"
+    ]
+  }
+}

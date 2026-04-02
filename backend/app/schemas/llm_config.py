@@ -1,7 +1,7 @@
 from typing import Literal
 from pydantic import BaseModel
 
-LlmProvider = Literal["openai", "deepseek", "qwen", "zhipu", "moonshot"]
+LlmProvider = Literal["openai", "deepseek", "qwen", "zhipu", "moonshot", "volcengine"]
 
 
 class LlmConfigCreate(BaseModel):

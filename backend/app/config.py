@@ -38,11 +38,12 @@ class Settings(BaseSettings):
 
     # LLM 提供商 base_url 映射
     LLM_PROVIDER_BASE_URLS: dict = {
-        "openai":   "https://api.openai.com/v1",
-        "deepseek": "https://api.deepseek.com/v1",
-        "qwen":     "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "zhipu":    "https://open.bigmodel.cn/api/paas/v4",
-        "moonshot": "https://api.moonshot.cn/v1",
+        "openai":      "https://api.openai.com/v1",
+        "deepseek":    "https://api.deepseek.com/v1",
+        "qwen":        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "zhipu":       "https://open.bigmodel.cn/api/paas/v4",
+        "moonshot":    "https://api.moonshot.cn/v1",
+        "volcengine":  "https://ark.cn-beijing.volces.com/api/v3",
     }
 
     class Config:

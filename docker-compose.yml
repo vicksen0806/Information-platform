@@ -1,5 +1,10 @@
 version: "3.9"
 
+x-dns: &dns
+  dns:
+    - 8.8.8.8
+    - 8.8.4.4
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -47,6 +52,9 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
 
   worker:
     build:
@@ -65,6 +73,9 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
 
   beat:
     build:
@@ -83,6 +94,9 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
 
   frontend:
     build:

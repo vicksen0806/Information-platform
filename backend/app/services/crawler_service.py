@@ -64,7 +64,7 @@ def fetch_url_sync(url: str, source_type: str) -> tuple[str | None, int | None, 
     Runs synchronously (called from Celery worker thread).
     """
     try:
-        if source_type == "rss":
+        if source_type in ("rss", "search"):
             content, status = _extract_rss_content(url)
         else:
             content, status = _fetch_webpage(url)

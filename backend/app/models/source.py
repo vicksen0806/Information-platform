@@ -13,7 +13,8 @@ class Source(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
-    source_type: Mapped[str] = mapped_column(String(50), nullable=False, default="webpage")  # webpage | rss | sitemap
+    search_query: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False, default="webpage")  # webpage | rss | search
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     crawl_interval_hours: Mapped[int] = mapped_column(Integer, default=24, nullable=False)
     last_crawled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
