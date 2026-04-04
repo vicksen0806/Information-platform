@@ -1,18 +1,37 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy import select, exists
 
 from app.database import get_db
 from app.models.user import User
 from app.models.crawl_job import CrawlJob
 from app.models.crawl_result import CrawlResult
 from app.models.source import Source
+from app.models.digest import Digest
 from app.core.dependencies import get_current_user
 from app.schemas.crawl_job import CrawlJobResponse, CrawlResultResponse
 
 router = APIRouter(prefix="/crawl-jobs", tags=["crawl-jobs"])
+
+
+async def _with_digest_flag(jobs: list[CrawlJob], db: AsyncSession) -> list[CrawlJobResponse]:
+    """Attach has_digest and digest_id to each job response."""
+    if not jobs:
+        return []
+    job_ids = [j.id for j in jobs]
+    result = await db.execute(
+        select(Digest.crawl_job_id, Digest.id).where(Digest.crawl_job_id.in_(job_ids))
+    )
+    digest_map = {row[0]: str(row[1]) for row in result.all()}
+    responses = []
+    for job in jobs:
+        r = CrawlJobResponse.model_validate(job)
+        digest_id = digest_map.get(job.id)
+        r.has_digest = digest_id is not None
+        r.digest_id = digest_id
+        responses.append(r)
+    return responses
 
 
 @router.get("", response_model=list[CrawlJobResponse])
@@ -29,7 +48,8 @@ async def list_crawl_jobs(
         .limit(limit)
         .offset(offset)
     )
-    return result.scalars().all()
+    jobs = result.scalars().all()
+    return await _with_digest_flag(jobs, db)
 
 
 @router.post("", response_model=CrawlJobResponse, status_code=status.HTTP_201_CREATED)
@@ -37,16 +57,6 @@ async def trigger_crawl(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # Check if there's already a running job for this user
-    result = await db.execute(
-        select(CrawlJob).where(
-            CrawlJob.user_id == current_user.id,
-            CrawlJob.status.in_(["pending", "running"]),
-        )
-    )
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="A crawl job is already running")
-
     job = CrawlJob(user_id=current_user.id, triggered_by="manual")
     db.add(job)
     await db.flush()
@@ -65,7 +75,9 @@ async def get_crawl_job(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await _get_owned_job(job_id, current_user.id, db)
+    job = await _get_owned_job(job_id, current_user.id, db)
+    responses = await _with_digest_flag([job], db)
+    return responses[0]
 
 
 @router.get("/{job_id}/results", response_model=list[CrawlResultResponse])

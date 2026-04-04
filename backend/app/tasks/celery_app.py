@@ -23,12 +23,10 @@ celery_app.conf.update(
     task_acks_late=True,
 )
 
+# Run every 30 minutes — crawl_all_users checks each user's personal schedule
 celery_app.conf.beat_schedule = {
-    "daily-crawl-all-users": {
+    "check-user-schedules": {
         "task": "app.tasks.crawl_tasks.crawl_all_users",
-        "schedule": crontab(
-            hour=settings.DAILY_CRAWL_HOUR,
-            minute=settings.DAILY_CRAWL_MINUTE,
-        ),
+        "schedule": crontab(minute="0,30"),
     },
 }

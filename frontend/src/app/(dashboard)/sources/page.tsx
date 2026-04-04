@@ -260,7 +260,7 @@ export default function SourcesPage() {
                 </div>
               </div>
               {testResult?.id === source.id && (
-                <div className="mx-px mt-1 p-3 bg-muted rounded-b text-xs font-mono whitespace-pre-wrap">
+                <div className="mx-px mt-1 p-3 bg-muted rounded-b-md text-xs font-mono whitespace-pre-wrap break-words">
                   {testResult.result}
                 </div>
               )}

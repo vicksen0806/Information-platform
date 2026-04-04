@@ -25,6 +25,7 @@ class DigestUpdate(BaseModel):
 class DigestListItem(BaseModel):
     id: uuid.UUID
     title: str | None
+    keywords_used: list[str] | None
     sources_count: int
     is_read: bool
     created_at: datetime

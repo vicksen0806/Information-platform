@@ -14,36 +14,50 @@ def _build_client(config) -> OpenAI:
 def generate_digest_sync(
     config,
     keywords: list[str],
-    crawled_contents: list[dict],  # [{source_name, content}]
+    crawled_contents: list[dict],  # [{keyword, content}]
 ) -> dict:
     """
-    Call LLM to generate a digest. Returns {title, summary_md, tokens_used}.
+    Call LLM to generate a structured digest. Returns {title, summary_md, tokens_used}.
     Runs synchronously (called from Celery worker).
     """
     client = _build_client(config)
 
-    # Build context from crawled content (truncate to stay within token limits)
+    # Build per-keyword content blocks
+    # Each keyword may have many full articles — keep up to 6000 chars
+    # (first 4000 chars capture main content, last 2000 catch trailing context)
     content_blocks = []
     for item in crawled_contents:
-        name = item.get("source_name", "未知来源")
-        text = item.get("content", "")[:3000]  # Truncate per source
-        content_blocks.append(f"### 来源：{name}\n{text}")
+        kw = item.get("keyword", "其他")
+        raw = item.get("content", "")
+        if len(raw) > 6000:
+            text = raw[:4000] + "\n...\n" + raw[-2000:]
+        else:
+            text = raw
+        content_blocks.append(f"=== 关键词：{kw} ===\n{text}")
 
     combined_content = "\n\n".join(content_blocks)
     keywords_str = "、".join(keywords) if keywords else "（未设置关键词）"
 
     system_prompt = (
-        "你是一个信息助理，负责从用户提供的网页内容中提炼与用户关注的关键词相关的信息，"
-        "并生成一份简洁、结构清晰的每日信息摘要。"
-        "摘要应使用 Markdown 格式，包含一个标题、分类整理的要点以及简短的结论。"
-        "如果某个来源没有与关键词相关的内容，可以跳过。"
-        "请用中文输出。"
+        "你是一个专业的信息助理，负责将用户关注的各类关键词的抓取内容整理成结构清晰的每日摘要。\n"
+        "输出必须严格使用以下 Markdown 结构，不得省略任何一部分：\n\n"
+        "# 今日信息摘要\n\n"
+        "## 总结\n"
+        "（2-4句话，概括今日所有关键词的整体动态，让用户30秒内了解全局）\n\n"
+        "## 详细\n\n"
+        "### [关键词1]\n"
+        "- **[要点标题]**：具体内容说明\n"
+        "- **[要点标题]**：具体内容说明\n\n"
+        "### [关键词2]\n"
+        "- **[要点标题]**：具体内容说明\n\n"
+        "（每个关键词单独一节，只写与该关键词相关的内容，无关内容跳过）\n"
+        "请用中文输出，语言简洁准确。"
     )
 
     user_prompt = (
         f"用户关注的关键词：{keywords_str}\n\n"
-        f"以下是今日抓取的内容：\n\n{combined_content}\n\n"
-        "请生成今日信息摘要，第一行写标题（以 # 开头），后面写正文。"
+        f"以下是按关键词分组的今日抓取内容：\n\n{combined_content}\n\n"
+        "请严格按照系统提示的 Markdown 结构生成摘要。"
     )
 
     response = client.chat.completions.create(
@@ -53,7 +67,8 @@ def generate_digest_sync(
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.3,
-        max_tokens=2000,
+        max_tokens=3000,
+        timeout=90,
     )
 
     full_text = response.choices[0].message.content or ""

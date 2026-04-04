@@ -11,6 +11,10 @@ class CrawlJobResponse(BaseModel):
     completed_at: datetime | None
     error_message: str | None
     created_at: datetime
+    has_digest: bool = False
+    digest_id: str | None = None
+    new_content_found: bool = False
+    digest_error: str | None = None
 
     model_config = {"from_attributes": True}
 

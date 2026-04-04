@@ -22,27 +22,27 @@ export default function DigestDetailPage() {
     setRegenerating(true);
     try {
       await digestsApi.regenerate(digest.id);
-      alert("重新生成任务已触发，请稍后刷新查看");
+      alert("Regeneration triggered — refresh in a moment to see the result");
     } finally {
       setRegenerating(false);
     }
   }
 
   async function handleDelete() {
-    if (!confirm("确定删除此摘要？")) return;
+    if (!confirm("Delete this digest?")) return;
     await digestsApi.delete(id);
     router.push("/digests");
   }
 
-  if (loading) return <div className="p-6 text-center text-muted-foreground">加载中...</div>;
-  if (!digest) return <div className="p-6 text-center text-muted-foreground">摘要不存在</div>;
+  if (loading) return <div className="p-6 text-center text-muted-foreground">Loading...</div>;
+  if (!digest) return <div className="p-6 text-center text-muted-foreground">Digest not found</div>;
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
       {/* Top bar */}
       <div className="flex items-center justify-between mb-6">
         <Link href="/digests" className="text-sm text-muted-foreground hover:text-foreground">
-          ← 返回列表
+          ← Back to list
         </Link>
         <div className="flex gap-2">
           <button
@@ -50,23 +50,23 @@ export default function DigestDetailPage() {
             disabled={regenerating}
             className="px-3 py-1.5 text-xs border border-border rounded hover:bg-muted disabled:opacity-50"
           >
-            {regenerating ? "处理中..." : "重新生成"}
+            {regenerating ? "Processing..." : "Regenerate"}
           </button>
           <button
             onClick={handleDelete}
             className="px-3 py-1.5 text-xs text-destructive border border-destructive/30 rounded hover:bg-destructive/10"
           >
-            删除
+            Delete
           </button>
         </div>
       </div>
 
       {/* Meta */}
       <div className="mb-4 text-xs text-muted-foreground flex flex-wrap gap-3">
-        <span>{new Date(digest.created_at).toLocaleString("zh-CN")}</span>
-        <span>{digest.sources_count} 个来源</span>
-        {digest.llm_model && <span>模型：{digest.llm_model}</span>}
-        {digest.tokens_used > 0 && <span>Token：{digest.tokens_used}</span>}
+        <span>{new Date(digest.created_at).toLocaleString("en-US")}</span>
+        <span>{digest.sources_count} sources</span>
+        {digest.llm_model && <span>Model: {digest.llm_model}</span>}
+        {digest.tokens_used > 0 && <span>Tokens: {digest.tokens_used}</span>}
       </div>
 
       {digest.keywords_used && digest.keywords_used.length > 0 && (
@@ -82,13 +82,13 @@ export default function DigestDetailPage() {
       {/* Content */}
       <div className="bg-background border border-border rounded-lg p-6">
         {digest.summary_md ? (
-          <div className="prose max-w-none">
+          <div className="prose prose-slate dark:prose-invert max-w-none prose-h1:text-2xl prose-h2:text-lg prose-h2:border-b prose-h2:border-border prose-h2:pb-1 prose-h3:text-base prose-h3:font-semibold prose-li:my-0.5">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
               {digest.summary_md}
             </ReactMarkdown>
           </div>
         ) : (
-          <div className="text-center py-12 text-muted-foreground">摘要内容为空</div>
+          <div className="text-center py-12 text-muted-foreground">No content</div>
         )}
       </div>
     </div>

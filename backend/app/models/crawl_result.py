@@ -17,6 +17,7 @@ class CrawlResult(Base):
     http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
     crawled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    keyword_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     crawl_job: Mapped["CrawlJob"] = relationship("CrawlJob", back_populates="crawl_results")
     source: Mapped["Source"] = relationship("Source", back_populates="crawl_results")

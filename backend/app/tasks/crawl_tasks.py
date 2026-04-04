@@ -25,13 +25,48 @@ def _get_session() -> Session:
 
 @celery_app.task(name="app.tasks.crawl_tasks.crawl_all_users", bind=True, max_retries=1)
 def crawl_all_users(self):
-    """Scheduled task: trigger a crawl job for every active user."""
+    """
+    Runs every 30 minutes. For each active user, checks whether their
+    personal schedule matches the current time (within a 30-minute window).
+    Falls back to the global DAILY_CRAWL_HOUR setting for users without a schedule.
+    """
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
     from app.models.user import User
+    from app.models.user_schedule_config import UserScheduleConfig
+
+    now_utc = datetime.now(timezone.utc)
 
     with _get_session() as db:
         users = db.execute(select(User).where(User.is_active == True)).scalars().all()
+
         for user in users:
-            run_crawl_job.delay(None, str(user.id), triggered_by="schedule")
+            schedule = db.execute(
+                select(UserScheduleConfig).where(UserScheduleConfig.user_id == user.id)
+            ).scalar_one_or_none()
+
+            if schedule and not schedule.is_active:
+                continue  # User explicitly disabled scheduling
+
+            if schedule:
+                try:
+                    tz = ZoneInfo(schedule.timezone)
+                except ZoneInfoNotFoundError:
+                    tz = ZoneInfo("UTC")
+                now_local = now_utc.astimezone(tz)
+                target_hour = schedule.schedule_hour
+                target_minute = schedule.schedule_minute
+            else:
+                # Default: use global config (UTC)
+                now_local = now_utc
+                target_hour = settings.DAILY_CRAWL_HOUR
+                target_minute = settings.DAILY_CRAWL_MINUTE
+
+            # Trigger if we're within 15 minutes of the scheduled time
+            current_total = now_local.hour * 60 + now_local.minute
+            target_total = target_hour * 60 + target_minute
+            if abs(current_total - target_total) <= 15:
+                run_crawl_job.delay(None, str(user.id), triggered_by="schedule")
 
 
 @celery_app.task(name="app.tasks.crawl_tasks.run_crawl_job", bind=True, max_retries=2)
@@ -43,8 +78,8 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
     3. Store CrawlResult for each (skip if content unchanged)
     4. Chain into generate_digest
     """
+    import urllib.parse
     from app.models.user import User
-    from app.models.source import Source
     from app.models.crawl_job import CrawlJob
     from app.models.crawl_result import CrawlResult
     from app.models.keyword import Keyword
@@ -75,12 +110,12 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
         job.started_at = datetime.now(timezone.utc)
         db.commit()
 
-        # Get active sources
-        sources = db.execute(
-            select(Source).where(Source.user_id == user_uuid, Source.is_active == True)
+        # Get active keywords — each keyword is now also the crawl source
+        keywords = db.execute(
+            select(Keyword).where(Keyword.user_id == user_uuid, Keyword.is_active == True)
         ).scalars().all()
 
-        if not sources:
+        if not keywords:
             job.status = "completed"
             job.completed_at = datetime.now(timezone.utc)
             db.commit()
@@ -88,13 +123,23 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
 
         has_new_content = False
 
-        for source in sources:
-            content, http_status, error = fetch_url_sync(source.url, source.source_type)
+        for kw in keywords:
+            # Use specified URL or fall back to Google News RSS search
+            if kw.url:
+                crawl_url = kw.url
+                crawl_type = kw.source_type
+            else:
+                query = urllib.parse.quote(kw.text)
+                crawl_url = f"https://news.google.com/rss/search?q={query}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+                crawl_type = "rss"
+
+            content, http_status, error = fetch_url_sync(crawl_url, crawl_type)
 
             if error or not content:
                 result = CrawlResult(
                     crawl_job_id=job.id,
-                    source_id=source.id,
+                    source_id=None,
+                    keyword_text=kw.text,
                     http_status=http_status,
                     error_message=error or "Empty content",
                 )
@@ -104,20 +149,24 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
 
             content_hash = compute_content_hash(content)
 
-            # Check for duplicate (same hash as most recent result for this source)
-            latest = db.execute(
+            # Only deduplicate within the same day
+            today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+            duplicate = db.execute(
                 select(CrawlResult)
-                .where(CrawlResult.source_id == source.id)
-                .order_by(CrawlResult.crawled_at.desc())
+                .where(
+                    CrawlResult.content_hash == content_hash,
+                    CrawlResult.crawled_at >= today_start,
+                    CrawlResult.crawl_job_id != job.id,
+                )
                 .limit(1)
             ).scalar_one_or_none()
 
-            if latest and latest.content_hash == content_hash:
-                # Content unchanged — still record it but flag it
+            if duplicate:
                 result = CrawlResult(
                     crawl_job_id=job.id,
-                    source_id=source.id,
-                    raw_content=None,  # Don't store duplicate content
+                    source_id=None,
+                    keyword_text=kw.text,
+                    raw_content=None,
                     content_hash=content_hash,
                     http_status=http_status,
                     error_message="Content unchanged since last crawl",
@@ -126,19 +175,19 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
                 has_new_content = True
                 result = CrawlResult(
                     crawl_job_id=job.id,
-                    source_id=source.id,
+                    source_id=None,
+                    keyword_text=kw.text,
                     raw_content=content,
                     content_hash=content_hash,
                     http_status=http_status,
                 )
 
             db.add(result)
-            # Update last_crawled_at on source
-            source.last_crawled_at = datetime.now(timezone.utc)
             db.flush()
 
         job.status = "completed"
         job.completed_at = datetime.now(timezone.utc)
+        job.new_content_found = has_new_content
         db.commit()
 
         job_id_str = str(job.id)

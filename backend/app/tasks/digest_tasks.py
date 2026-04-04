@@ -26,7 +26,6 @@ def generate_digest(self, job_id: str, user_id: str):
     - Upserts a Digest row
     """
     from app.models.crawl_result import CrawlResult
-    from app.models.source import Source
     from app.models.digest import Digest
     from app.models.keyword import Keyword
     from app.models.user_llm_config import UserLlmConfig
@@ -46,23 +45,28 @@ def generate_digest(self, job_id: str, user_id: str):
 
         # Load crawl results with actual content
         rows = db.execute(
-            select(CrawlResult, Source.name.label("source_name"))
-            .join(Source, CrawlResult.source_id == Source.id)
+            select(CrawlResult)
             .where(
                 CrawlResult.crawl_job_id == job_uuid,
                 CrawlResult.raw_content.isnot(None),
             )
-        ).all()
+        ).scalars().all()
 
         if not rows:
             return  # Nothing to summarize
 
+        # Group content by keyword so LLM receives per-keyword sections
+        keyword_content_map: dict[str, list[str]] = {}
+        for row in rows:
+            kw_label = row.keyword_text or "其他"
+            keyword_content_map.setdefault(kw_label, []).append(row.raw_content or "")
+
         crawled_contents = [
-            {"source_name": row.source_name, "content": row.CrawlResult.raw_content}
-            for row in rows
+            {"keyword": kw_label, "content": "\n\n".join(contents)}
+            for kw_label, contents in keyword_content_map.items()
         ]
 
-        # Load active keywords
+        # Load active keywords (for prompt context)
         keywords = db.execute(
             select(Keyword).where(
                 Keyword.user_id == user_uuid,
@@ -75,6 +79,17 @@ def generate_digest(self, job_id: str, user_id: str):
         try:
             result = generate_digest_sync(llm_config, keyword_texts, crawled_contents)
         except Exception as exc:
+            from openai import AuthenticationError as OpenAIAuthError
+            if isinstance(exc, OpenAIAuthError):
+                # API Key invalid — record error and stop immediately, do not retry
+                from app.models.crawl_job import CrawlJob
+                job = db.execute(
+                    select(CrawlJob).where(CrawlJob.id == job_uuid)
+                ).scalar_one_or_none()
+                if job:
+                    job.digest_error = "API Key 已失效，请在设置页面更新"
+                    db.commit()
+                return
             raise self.retry(exc=exc, countdown=60)
 
         # Upsert digest
@@ -104,3 +119,19 @@ def generate_digest(self, job_id: str, user_id: str):
             db.add(digest)
 
         db.commit()
+
+        # Send webhook notification if configured
+        from app.models.user_notification_config import UserNotificationConfig
+        notif_config = db.execute(
+            select(UserNotificationConfig).where(
+                UserNotificationConfig.user_id == user_uuid,
+                UserNotificationConfig.is_active == True,
+            )
+        ).scalar_one_or_none()
+
+        if notif_config:
+            from app.services.notification_service import send_digest_notification
+            from datetime import datetime, timezone as tz
+            created_str = datetime.now(tz.utc).strftime("%Y-%m-%d %H:%M UTC")
+            final_summary = (existing_digest.summary_md if existing_digest else digest.summary_md) or ""
+            send_digest_notification(notif_config, keyword_texts, final_summary, created_str)

@@ -6,7 +6,7 @@ LlmProvider = Literal["openai", "deepseek", "qwen", "zhipu", "moonshot", "volcen
 
 class LlmConfigCreate(BaseModel):
     provider: LlmProvider
-    api_key: str
+    api_key: str | None = None  # 留空时保留已有密钥
     model_name: str
     base_url: str | None = None
 

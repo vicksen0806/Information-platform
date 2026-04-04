@@ -21,7 +21,7 @@ export default function RegisterPage() {
       await authApi.login({ email, password });
       router.push("/dashboard");
     } catch (err: any) {
-      setError(err.message || "注册失败");
+      setError(err.message || "Registration failed");
     } finally {
       setLoading(false);
     }
@@ -30,8 +30,8 @@ export default function RegisterPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-muted/30">
       <div className="w-full max-w-sm bg-background border border-border rounded-lg p-8 shadow-sm">
-        <h1 className="text-2xl font-bold mb-1">注册</h1>
-        <p className="text-sm text-muted-foreground mb-6">创建你的信息平台账户</p>
+        <h1 className="text-2xl font-bold mb-1">Create account</h1>
+        <p className="text-sm text-muted-foreground mb-6">Sign up for Info Platform</p>
 
         {error && (
           <div className="mb-4 px-3 py-2 text-sm text-destructive bg-destructive/10 rounded">
@@ -41,17 +41,17 @@ export default function RegisterPage() {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium mb-1">昵称（可选）</label>
+            <label className="block text-sm font-medium mb-1">Display name (optional)</label>
             <input
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               className="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder="你的名字"
+              placeholder="Your name"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">邮箱</label>
+            <label className="block text-sm font-medium mb-1">Email</label>
             <input
               type="email"
               required
@@ -62,7 +62,7 @@ export default function RegisterPage() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">密码（至少 8 位）</label>
+            <label className="block text-sm font-medium mb-1">Password (min 8 characters)</label>
             <input
               type="password"
               required
@@ -78,14 +78,14 @@ export default function RegisterPage() {
             disabled={loading}
             className="w-full py-2 px-4 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:opacity-90 disabled:opacity-50"
           >
-            {loading ? "注册中..." : "注册"}
+            {loading ? "Creating account..." : "Create account"}
           </button>
         </form>
 
         <p className="mt-4 text-sm text-center text-muted-foreground">
-          已有账号？{" "}
+          Already have an account?{" "}
           <Link href="/login" className="text-primary hover:underline">
-            立即登录
+            Sign in
           </Link>
         </p>
       </div>

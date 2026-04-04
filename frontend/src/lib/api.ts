@@ -8,6 +8,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
 
   if (!res.ok) {
+    if (res.status === 401) {
+      window.location.href = "/login";
+      throw new Error("Unauthorized");
+    }
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     const detail = err.detail;
     const message = Array.isArray(detail)
@@ -53,10 +57,10 @@ export const sourcesApi = {
 // ── Keywords ──────────────────────────────────────────────────────────────────
 export const keywordsApi = {
   list: () => request<Keyword[]>("/keywords"),
-  create: (text: string) =>
-    request<Keyword>("/keywords", { method: "POST", body: JSON.stringify({ text }) }),
-  toggle: (id: string, is_active: boolean) =>
-    request<Keyword>(`/keywords/${id}`, { method: "PATCH", body: JSON.stringify({ is_active }) }),
+  create: (data: { text: string; url?: string; source_type?: string }) =>
+    request<Keyword>("/keywords", { method: "POST", body: JSON.stringify(data) }),
+  update: (id: string, data: { is_active?: boolean; url?: string; source_type?: string }) =>
+    request<Keyword>(`/keywords/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   delete: (id: string) => request(`/keywords/${id}`, { method: "DELETE" }),
 };
 
@@ -69,7 +73,7 @@ export const crawlJobsApi = {
 
 // ── Digests ───────────────────────────────────────────────────────────────────
 export const digestsApi = {
-  list: () => request<DigestListItem[]>("/digests"),
+  list: (q?: string) => request<DigestListItem[]>(`/digests${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   get: (id: string) => request<Digest>(`/digests/${id}`),
   markRead: (id: string, is_read: boolean) =>
     request<Digest>(`/digests/${id}`, { method: "PATCH", body: JSON.stringify({ is_read }) }),
@@ -84,6 +88,16 @@ export const settingsApi = {
     request<LlmConfig>("/settings/llm", { method: "PUT", body: JSON.stringify(data) }),
   deleteLlm: () => request("/settings/llm", { method: "DELETE" }),
   testLlm: () => request<{ success: boolean; message: string }>("/settings/llm/test", { method: "POST" }),
+
+  getSchedule: () => request<ScheduleConfig>("/settings/schedule"),
+  upsertSchedule: (data: ScheduleConfig) =>
+    request<ScheduleConfig>("/settings/schedule", { method: "PUT", body: JSON.stringify(data) }),
+
+  getNotification: () => request<NotificationConfig>("/settings/notification"),
+  upsertNotification: (data: { webhook_type: string; webhook_url: string; is_active: boolean }) =>
+    request<NotificationConfig>("/settings/notification", { method: "PUT", body: JSON.stringify(data) }),
+  deleteNotification: () => request("/settings/notification", { method: "DELETE" }),
+  testNotification: () => request<{ success: boolean; message: string }>("/settings/notification/test", { method: "POST" }),
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -119,6 +133,8 @@ export interface Keyword {
   id: string;
   text: string;
   is_active: boolean;
+  url: string | null;
+  source_type: string;
   created_at: string;
 }
 
@@ -130,11 +146,16 @@ export interface CrawlJob {
   completed_at: string | null;
   error_message: string | null;
   created_at: string;
+  has_digest: boolean;
+  digest_id: string | null;
+  new_content_found: boolean;
+  digest_error: string | null;
 }
 
 export interface DigestListItem {
   id: string;
   title: string | null;
+  keywords_used: string[] | null;
   sources_count: number;
   is_read: boolean;
   created_at: string;
@@ -153,4 +174,17 @@ export interface LlmConfig {
   api_key_masked: string;
   model_name: string;
   base_url: string | null;
+}
+
+export interface ScheduleConfig {
+  schedule_hour: number;
+  schedule_minute: number;
+  timezone: string;
+  is_active: boolean;
+}
+
+export interface NotificationConfig {
+  webhook_type: string;
+  webhook_url: string;
+  is_active: boolean;
 }

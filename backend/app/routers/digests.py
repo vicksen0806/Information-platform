@@ -1,7 +1,9 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_, func, cast
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy import String
 
 from app.database import get_db
 from app.models.user import User
@@ -18,14 +20,25 @@ async def list_digests(
     db: AsyncSession = Depends(get_db),
     limit: int = 20,
     offset: int = 0,
+    q: str | None = Query(default=None, description="Full-text search query"),
 ):
-    result = await db.execute(
-        select(Digest)
-        .where(Digest.user_id == current_user.id)
-        .order_by(Digest.created_at.desc())
-        .limit(limit)
-        .offset(offset)
-    )
+    stmt = select(Digest).where(Digest.user_id == current_user.id)
+
+    if q and q.strip():
+        term = q.strip()
+        # Full-text search via tsvector + keyword array ILIKE fallback
+        fts = func.to_tsvector("simple", func.coalesce(Digest.title, "") + " " + func.coalesce(Digest.summary_md, ""))
+        tsq = func.plainto_tsquery("simple", term)
+        stmt = stmt.where(
+            or_(
+                fts.op("@@")(tsq),
+                Digest.title.ilike(f"%{term}%"),
+                func.cast(Digest.keywords_used, String).ilike(f"%{term}%"),
+            )
+        )
+
+    stmt = stmt.order_by(Digest.created_at.desc()).limit(limit).offset(offset)
+    result = await db.execute(stmt)
     return result.scalars().all()
 
 

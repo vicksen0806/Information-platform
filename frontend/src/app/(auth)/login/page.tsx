@@ -19,7 +19,7 @@ export default function LoginPage() {
       await authApi.login({ email, password });
       router.push("/dashboard");
     } catch (err: any) {
-      setError(err.message || "登录失败");
+      setError(err.message || "Login failed");
     } finally {
       setLoading(false);
     }
@@ -28,8 +28,8 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-muted/30">
       <div className="w-full max-w-sm bg-background border border-border rounded-lg p-8 shadow-sm">
-        <h1 className="text-2xl font-bold mb-1">登录</h1>
-        <p className="text-sm text-muted-foreground mb-6">欢迎回到信息平台</p>
+        <h1 className="text-2xl font-bold mb-1">Sign in</h1>
+        <p className="text-sm text-muted-foreground mb-6">Welcome back to Info Platform</p>
 
         {error && (
           <div className="mb-4 px-3 py-2 text-sm text-destructive bg-destructive/10 rounded">
@@ -39,7 +39,7 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium mb-1">邮箱</label>
+            <label className="block text-sm font-medium mb-1">Email</label>
             <input
               type="email"
               required
@@ -50,7 +50,7 @@ export default function LoginPage() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">密码</label>
+            <label className="block text-sm font-medium mb-1">Password</label>
             <input
               type="password"
               required
@@ -65,14 +65,14 @@ export default function LoginPage() {
             disabled={loading}
             className="w-full py-2 px-4 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:opacity-90 disabled:opacity-50"
           >
-            {loading ? "登录中..." : "登录"}
+            {loading ? "Signing in..." : "Sign in"}
           </button>
         </form>
 
         <p className="mt-4 text-sm text-center text-muted-foreground">
-          没有账号？{" "}
+          No account?{" "}
           <Link href="/register" className="text-primary hover:underline">
-            立即注册
+            Register
           </Link>
         </p>
       </div>

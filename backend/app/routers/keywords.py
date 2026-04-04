@@ -36,7 +36,12 @@ async def create_keyword(
     if len(count_result.scalars().all()) >= MAX_KEYWORDS_PER_USER:
         raise HTTPException(status_code=400, detail=f"Maximum {MAX_KEYWORDS_PER_USER} keywords allowed")
 
-    keyword = Keyword(user_id=current_user.id, text=data.text)
+    keyword = Keyword(
+        user_id=current_user.id,
+        text=data.text,
+        url=data.url or None,
+        source_type=data.source_type if data.url else "search",
+    )
     db.add(keyword)
     try:
         await db.flush()
@@ -54,7 +59,11 @@ async def update_keyword(
     db: AsyncSession = Depends(get_db),
 ):
     keyword = await _get_owned_keyword(keyword_id, current_user.id, db)
-    keyword.is_active = data.is_active
+    if data.is_active is not None:
+        keyword.is_active = data.is_active
+    if data.url is not None or (data.source_type is not None):
+        keyword.url = data.url or None
+        keyword.source_type = data.source_type if data.url else "search"
     await db.flush()
     await db.refresh(keyword)
     return keyword
