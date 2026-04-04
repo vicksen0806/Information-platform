@@ -4,6 +4,7 @@ Celery tasks for crawling.
 Note: Celery workers run synchronously, so we use synchronous SQLAlchemy
 with a regular (non-async) engine here for simplicity.
 """
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -21,6 +22,26 @@ _engine = create_engine(_sync_db_url, pool_pre_ping=True)
 
 def _get_session() -> Session:
     return Session(_engine)
+
+
+def _filter_seen_articles(content: str, seen_urls: set) -> tuple[str, set]:
+    """
+    Split content into individual articles (separated by ---), filter out
+    those whose Source URL was already processed in this job (cross-keyword dedup).
+    Returns (filtered_content, newly_seen_urls).
+    """
+    articles = content.split("\n\n---\n\n")
+    new_articles = []
+    new_urls: set = set()
+    for article in articles:
+        match = re.search(r"^Source:\s*(.+)$", article, re.MULTILINE)
+        if match:
+            url = match.group(1).strip()
+            if url in seen_urls:
+                continue  # duplicate across keywords — skip
+            new_urls.add(url)
+        new_articles.append(article)
+    return "\n\n---\n\n".join(new_articles), new_urls
 
 
 @celery_app.task(name="app.tasks.crawl_tasks.crawl_all_users", bind=True, max_retries=1)
@@ -125,13 +146,26 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
             return
 
         has_new_content = False
+        seen_urls: set = set()  # Track article URLs seen in this job (cross-keyword dedup)
 
         for kw in keywords:
             # Check per-keyword crawl interval — skip if crawled too recently
             if kw.last_crawled_at is not None:
-                from datetime import timedelta
                 elapsed_hours = (datetime.now(timezone.utc) - kw.last_crawled_at).total_seconds() / 3600
-                if elapsed_hours < kw.crawl_interval_hours:
+                effective_interval = kw.crawl_interval_hours
+
+                # Auto-adjust: if last 5 crawls all empty, use 4× interval (max 168h)
+                recent_contents = db.execute(
+                    select(CrawlResult.raw_content)
+                    .join(CrawlJob, CrawlResult.crawl_job_id == CrawlJob.id)
+                    .where(CrawlResult.keyword_text == kw.text, CrawlJob.user_id == user_uuid)
+                    .order_by(CrawlResult.crawled_at.desc())
+                    .limit(5)
+                ).scalars().all()
+                if len(recent_contents) >= 5 and all(r is None for r in recent_contents):
+                    effective_interval = min(kw.crawl_interval_hours * 4, 168)
+
+                if elapsed_hours < effective_interval:
                     continue  # Not due yet
 
             # Use specified URL or fall back to Google News RSS search
@@ -160,6 +194,24 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
                 db.flush()
                 continue
 
+            # Cross-keyword URL dedup: filter out articles already seen in this job
+            filtered_content, new_urls = _filter_seen_articles(content, seen_urls)
+            seen_urls.update(new_urls)
+
+            if not filtered_content.strip():
+                # All articles were duplicates from other keywords — skip
+                result = CrawlResult(
+                    crawl_job_id=job.id,
+                    source_id=None,
+                    keyword_text=kw.text,
+                    http_status=http_status,
+                    error_message="All articles duplicated across keywords",
+                )
+                db.add(result)
+                db.flush()
+                continue
+
+            content = filtered_content
             content_hash = compute_content_hash(content)
 
             # Only deduplicate within the same day
@@ -203,8 +255,71 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
         job.new_content_found = has_new_content
         db.commit()
 
+        # Failure alert: check if any active keyword has 3+ consecutive errors
+        _check_and_alert_failures(db, keywords, user_uuid, job.id)
+
         job_id_str = str(job.id)
 
     # Dispatch digest generation if there's new content and user has LLM configured
     if has_new_content:
         generate_digest.delay(job_id_str, user_id)
+
+
+def _check_and_alert_failures(db, keywords, user_uuid, current_job_id):
+    """After each crawl job, check for keywords with 3+ consecutive failures and send alert."""
+    from app.models.user_notification_config import UserNotificationConfig
+    from app.models.user_email_config import UserEmailConfig
+    from app.services.notification_service import send_digest_notification, send_email_notification
+    from datetime import timezone as tz
+
+    failing = []
+    for kw in keywords:
+        recent_errors = db.execute(
+            select(CrawlResult.error_message)
+            .join(CrawlJob, CrawlResult.crawl_job_id == CrawlJob.id)
+            .where(
+                CrawlResult.keyword_text == kw.text,
+                CrawlJob.user_id == user_uuid,
+                CrawlResult.error_message.isnot(None),
+                CrawlResult.error_message != "Content unchanged since last crawl",
+                CrawlResult.error_message != "All articles duplicated across keywords",
+            )
+            .order_by(CrawlResult.crawled_at.desc())
+            .limit(3)
+        ).scalars().all()
+        if len(recent_errors) >= 3:
+            failing.append(kw.text)
+
+    if not failing:
+        return
+
+    alert_md = (
+        "## ⚠️ 爬取失败告警\n\n"
+        f"以下关键词连续 3 次抓取失败，请检查网络或 URL 配置：\n\n"
+        + "\n".join(f"- **{kw}**" for kw in failing)
+    )
+    ts = datetime.now(tz.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    notif = db.execute(
+        select(UserNotificationConfig).where(
+            UserNotificationConfig.user_id == user_uuid,
+            UserNotificationConfig.is_active == True,
+        )
+    ).scalar_one_or_none()
+    if notif:
+        try:
+            send_digest_notification(notif, failing, alert_md, ts)
+        except Exception:
+            pass
+
+    email = db.execute(
+        select(UserEmailConfig).where(
+            UserEmailConfig.user_id == user_uuid,
+            UserEmailConfig.is_active == True,
+        )
+    ).scalar_one_or_none()
+    if email:
+        try:
+            send_email_notification(email, failing, alert_md, ts)
+        except Exception:
+            pass

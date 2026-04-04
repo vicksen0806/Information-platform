@@ -9,6 +9,7 @@ class LlmConfigCreate(BaseModel):
     api_key: str | None = None  # 留空时保留已有密钥
     model_name: str
     base_url: str | None = None
+    prompt_template: str | None = None
 
 
 class LlmConfigResponse(BaseModel):
@@ -16,6 +17,7 @@ class LlmConfigResponse(BaseModel):
     api_key_masked: str
     model_name: str
     base_url: str | None
+    prompt_template: str | None = None
 
     model_config = {"from_attributes": True}
 

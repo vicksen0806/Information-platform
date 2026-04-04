@@ -1,13 +1,12 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, exists
+from sqlalchemy import select, func
 
 from app.database import get_db
 from app.models.user import User
 from app.models.crawl_job import CrawlJob
 from app.models.crawl_result import CrawlResult
-from app.models.source import Source
 from app.models.digest import Digest
 from app.core.dependencies import get_current_user
 from app.schemas.crawl_job import CrawlJobResponse, CrawlResultResponse
@@ -62,7 +61,26 @@ async def trigger_crawl(
     await db.flush()
     await db.refresh(job)
 
-    # Dispatch to Celery
+    from app.tasks.crawl_tasks import run_crawl_job
+    run_crawl_job.delay(str(job.id), str(current_user.id))
+
+    return job
+
+
+@router.post("/{job_id}/retry", response_model=CrawlJobResponse, status_code=status.HTTP_201_CREATED)
+async def retry_crawl_job(
+    job_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new crawl job as a retry of a failed one."""
+    await _get_owned_job(job_id, current_user.id, db)  # verify ownership
+
+    job = CrawlJob(user_id=current_user.id, triggered_by="manual")
+    db.add(job)
+    await db.flush()
+    await db.refresh(job)
+
     from app.tasks.crawl_tasks import run_crawl_job
     run_crawl_job.delay(str(job.id), str(current_user.id))
 
@@ -89,26 +107,29 @@ async def get_crawl_results(
     await _get_owned_job(job_id, current_user.id, db)
 
     result = await db.execute(
-        select(CrawlResult, Source.name.label("source_name"))
-        .join(Source, CrawlResult.source_id == Source.id)
+        select(CrawlResult)
         .where(CrawlResult.crawl_job_id == job_id)
         .order_by(CrawlResult.crawled_at.asc())
     )
-    rows = result.all()
+    rows = result.scalars().all()
 
     items = []
-    for crawl_result, source_name in rows:
-        preview = None
-        if crawl_result.raw_content:
-            preview = crawl_result.raw_content[:300]
+    for cr in rows:
+        preview = cr.raw_content[:400].strip() if cr.raw_content else None
+        # Extract article titles from content (lines starting with ##)
+        article_count = 0
+        if cr.raw_content:
+            article_count = cr.raw_content.count("\n## ")
+            if cr.raw_content.startswith("## "):
+                article_count += 1
         items.append(CrawlResultResponse(
-            id=crawl_result.id,
-            source_id=crawl_result.source_id,
-            source_name=source_name,
-            http_status=crawl_result.http_status,
+            id=cr.id,
+            keyword_text=cr.keyword_text,
+            http_status=cr.http_status,
             content_preview=preview,
-            error_message=crawl_result.error_message,
-            crawled_at=crawl_result.crawled_at,
+            article_count=article_count,
+            error_message=cr.error_message,
+            crawled_at=cr.crawled_at,
         ))
     return items
 

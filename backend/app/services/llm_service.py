@@ -14,48 +14,67 @@ def _build_client(config) -> OpenAI:
 def generate_digest_sync(
     config,
     keywords: list[str],
-    crawled_contents: list[dict],  # [{keyword, content}]
+    crawled_contents: list[dict],  # [{keyword, content, group?}]
 ) -> dict:
     """
     Call LLM to generate a structured digest. Returns {title, summary_md, tokens_used}.
     Runs synchronously (called from Celery worker).
+    crawled_contents items may include optional 'group' key for section grouping.
     """
+    from collections import defaultdict
     client = _build_client(config)
 
-    # Build per-keyword content blocks
-    # Each keyword may have many full articles — keep up to 6000 chars
-    # (first 4000 chars capture main content, last 2000 catch trailing context)
-    content_blocks = []
+    # Group content blocks by group_name; ungrouped keywords go under None
+    groups: dict[str | None, list[tuple[str, str]]] = defaultdict(list)
     for item in crawled_contents:
         kw = item.get("keyword", "其他")
         raw = item.get("content", "")
+        group = item.get("group")  # may be absent or None
         if len(raw) > 6000:
             text = raw[:4000] + "\n...\n" + raw[-2000:]
         else:
             text = raw
-        content_blocks.append(f"=== 关键词：{kw} ===\n{text}")
+        groups[group].append((kw, text))
 
-    combined_content = "\n\n".join(content_blocks)
+    # Build content string: named groups first (sorted), then ungrouped
+    content_parts = []
+    has_groups = any(g is not None for g in groups)
+
+    for group_name in sorted(groups.keys(), key=lambda g: (g is None, g or "")):
+        items = groups[group_name]
+        if has_groups and group_name is not None:
+            content_parts.append(f"【分组：{group_name}】")
+        for kw, text in items:
+            content_parts.append(f"=== 关键词：{kw} ===\n{text}")
+
+    combined_content = "\n\n".join(content_parts)
     keywords_str = "、".join(keywords) if keywords else "（未设置关键词）"
 
-    system_prompt = (
+    group_instruction = ""
+    if has_groups:
+        group_instruction = (
+            "关键词已按分组标注。在「## 详细」中，先用 `## 分组名` 作为二级标题列出分组，"
+            "再在其下用 `### 关键词` 列出各关键词内容。未分组的关键词直接用 `### 关键词` 即可。\n"
+        )
+
+    default_system_prompt = (
         "你是一个专业的信息助理，负责将用户关注的各类关键词的抓取内容整理成结构清晰的每日摘要。\n"
-        "输出必须严格使用以下 Markdown 结构，不得省略任何一部分：\n\n"
+        "输出必须严格使用以下 Markdown 结构：\n\n"
         "# 今日信息摘要\n\n"
         "## 总结\n"
         "（2-4句话，概括今日所有关键词的整体动态，让用户30秒内了解全局）\n\n"
         "## 详细\n\n"
-        "### [关键词1]\n"
-        "- **[要点标题]**：具体内容说明 ([来源](URL))\n"
-        "- **[要点标题]**：具体内容说明 ([来源](URL))\n\n"
-        "### [关键词2]\n"
+        f"{group_instruction}"
+        "每个关键词节：\n"
+        "### [关键词]\n"
         "- **[要点标题]**：具体内容说明 ([来源](URL))\n\n"
         "重要规则：\n"
-        "1. 每个关键词单独一节，只写与该关键词相关的内容，无关内容跳过\n"
-        "2. 每条要点必须在末尾附上原文来源链接，格式为 ([来源](URL))，URL取自内容中的 'Source: URL' 字段\n"
-        "3. 如果某条内容没有来源链接，则省略链接部分\n"
+        "1. 每个关键词单独一节，只写与该关键词相关的内容\n"
+        "2. 每条要点必须在末尾附上原文来源链接 ([来源](URL))，URL取自 'Source: URL' 字段\n"
+        "3. 没有来源链接时省略链接\n"
         "请用中文输出，语言简洁准确。"
     )
+    system_prompt = (config.prompt_template.strip() if getattr(config, "prompt_template", None) else None) or default_system_prompt
 
     user_prompt = (
         f"用户关注的关键词：{keywords_str}\n\n"

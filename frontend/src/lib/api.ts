@@ -59,37 +59,50 @@ export const keywordsApi = {
   list: (group?: string) =>
     request<Keyword[]>(`/keywords${group !== undefined ? `?group=${encodeURIComponent(group)}` : ""}`),
   listGroups: () => request<string[]>("/keywords/groups"),
+  articleStats: () => request<Record<string, { day: string; count: number }[]>>("/keywords/article-stats"),
   create: (data: { text: string; url?: string; source_type?: string; group_name?: string; crawl_interval_hours?: number }) =>
     request<Keyword>("/keywords", { method: "POST", body: JSON.stringify(data) }),
   update: (id: string, data: { is_active?: boolean; url?: string; source_type?: string; group_name?: string; crawl_interval_hours?: number }) =>
     request<Keyword>(`/keywords/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   delete: (id: string) => request(`/keywords/${id}`, { method: "DELETE" }),
+  export: () => request<KeywordExportItem[]>("/keywords/export"),
+  import: (data: KeywordExportItem[]) =>
+    request<{ added: number; skipped: number }>("/keywords/import", { method: "POST", body: JSON.stringify(data) }),
 };
 
 // ── Crawl Jobs ────────────────────────────────────────────────────────────────
 export const crawlJobsApi = {
-  list: () => request<CrawlJob[]>("/crawl-jobs"),
+  list: (limit = 20, offset = 0) => request<CrawlJob[]>(`/crawl-jobs?limit=${limit}&offset=${offset}`),
   trigger: () => request<CrawlJob>("/crawl-jobs", { method: "POST" }),
+  retry: (id: string) => request<CrawlJob>(`/crawl-jobs/${id}/retry`, { method: "POST" }),
   get: (id: string) => request<CrawlJob>(`/crawl-jobs/${id}`),
+  results: (id: string) => request<CrawlResult[]>(`/crawl-jobs/${id}/results`),
 };
 
 // ── Digests ───────────────────────────────────────────────────────────────────
 export const digestsApi = {
-  list: (q?: string, keyword?: string) => {
+  list: (q?: string, keyword?: string, limit = 20, offset = 0) => {
     const params = new URLSearchParams();
     if (q) params.set("q", q);
     if (keyword) params.set("keyword", keyword);
-    const qs = params.toString();
-    return request<DigestListItem[]>(`/digests${qs ? `?${qs}` : ""}`);
+    params.set("limit", String(limit));
+    params.set("offset", String(offset));
+    return request<DigestListItem[]>(`/digests?${params.toString()}`);
   },
   get: (id: string) => request<Digest>(`/digests/${id}`),
   usage: () => request<UsageStats>("/digests/usage"),
   markRead: (id: string, is_read: boolean) =>
     request<Digest>(`/digests/${id}`, { method: "PATCH", body: JSON.stringify({ is_read }) }),
+  markAllRead: () => request("/digests/mark-all-read", { method: "POST" }),
   delete: (id: string) => request(`/digests/${id}`, { method: "DELETE" }),
   regenerate: (id: string) => request<Digest>(`/digests/${id}/regenerate`, { method: "POST" }),
   share: (id: string) => request<Digest>(`/digests/${id}/share`, { method: "POST" }),
   unshare: (id: string) => request<Digest>(`/digests/${id}/share`, { method: "DELETE" }),
+  setFeedback: (id: string, value: "positive" | "negative") =>
+    request<Digest>(`/digests/${id}/feedback`, { method: "PUT", body: JSON.stringify({ value }) }),
+  deleteFeedback: (id: string) => request<Digest>(`/digests/${id}/feedback`, { method: "DELETE" }),
+  star: (id: string) => request<Digest>(`/digests/${id}/star`, { method: "POST" }),
+  unstar: (id: string) => request<Digest>(`/digests/${id}/star`, { method: "DELETE" }),
 };
 
 // ── Public (no-auth) ──────────────────────────────────────────────────────────
@@ -100,7 +113,7 @@ export const publicApi = {
 // ── Settings ──────────────────────────────────────────────────────────────────
 export const settingsApi = {
   getLlm: () => request<LlmConfig>("/settings/llm"),
-  upsertLlm: (data: { provider: string; api_key: string; model_name: string; base_url?: string }) =>
+  upsertLlm: (data: { provider: string; api_key: string; model_name: string; base_url?: string; prompt_template?: string }) =>
     request<LlmConfig>("/settings/llm", { method: "PUT", body: JSON.stringify(data) }),
   deleteLlm: () => request("/settings/llm", { method: "DELETE" }),
   testLlm: () => request<{ success: boolean; message: string }>("/settings/llm/test", { method: "POST" }),
@@ -108,12 +121,31 @@ export const settingsApi = {
   getSchedule: () => request<ScheduleConfig>("/settings/schedule"),
   upsertSchedule: (data: ScheduleConfig) =>
     request<ScheduleConfig>("/settings/schedule", { method: "PUT", body: JSON.stringify(data) }),
+  getNextCrawl: () => request<NextCrawlInfo>("/settings/schedule/next-crawl"),
 
   getNotification: () => request<NotificationConfig>("/settings/notification"),
   upsertNotification: (data: { webhook_type: string; webhook_url: string; is_active: boolean }) =>
     request<NotificationConfig>("/settings/notification", { method: "PUT", body: JSON.stringify(data) }),
   deleteNotification: () => request("/settings/notification", { method: "DELETE" }),
   testNotification: () => request<{ success: boolean; message: string }>("/settings/notification/test", { method: "POST" }),
+
+  getEmail: () => request<EmailConfig>("/settings/email"),
+  upsertEmail: (data: { smtp_host: string; smtp_port: number; smtp_user: string; smtp_password?: string; smtp_from: string; smtp_to: string; is_active: boolean }) =>
+    request<EmailConfig>("/settings/email", { method: "PUT", body: JSON.stringify(data) }),
+  deleteEmail: () => request("/settings/email", { method: "DELETE" }),
+  testEmail: () => request<{ success: boolean; message: string }>("/settings/email/test", { method: "POST" }),
+
+  getFeedToken: () => request<FeedTokenInfo>("/settings/feed-token"),
+
+  getNotificationRoutes: () => request<NotificationRoute[]>("/settings/notification-routes"),
+  createNotificationRoute: (data: { group_name?: string | null; webhook_type: string; webhook_url: string; is_active: boolean }) =>
+    request<NotificationRoute>("/settings/notification-routes", { method: "POST", body: JSON.stringify(data) }),
+  deleteNotificationRoute: (id: string) => request(`/settings/notification-routes/${id}`, { method: "DELETE" }),
+};
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+export const statsApi = {
+  get: () => request<Stats>("/stats"),
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -171,6 +203,16 @@ export interface CrawlJob {
   digest_error: string | null;
 }
 
+export interface CrawlResult {
+  id: string;
+  keyword_text: string | null;
+  http_status: number | null;
+  content_preview: string | null;
+  article_count: number;
+  error_message: string | null;
+  crawled_at: string;
+}
+
 export interface DigestListItem {
   id: string;
   title: string | null;
@@ -178,6 +220,8 @@ export interface DigestListItem {
   sources_count: number;
   is_read: boolean;
   created_at: string;
+  feedback: "positive" | "negative" | null;
+  is_starred: boolean;
 }
 
 export interface Digest extends DigestListItem {
@@ -194,6 +238,7 @@ export interface LlmConfig {
   api_key_masked: string;
   model_name: string;
   base_url: string | null;
+  prompt_template: string | null;
 }
 
 export interface ScheduleConfig {
@@ -222,4 +267,51 @@ export interface UsageStats {
   this_month_tokens: number;
   this_month_digests: number;
   monthly: UsageMonthly[];
+}
+
+export interface Stats {
+  this_month_crawls: number;
+  this_month_sources: number;
+  this_month_tokens: number;
+  unread_digests: number;
+}
+
+export interface EmailConfig {
+  smtp_host: string;
+  smtp_port: number;
+  smtp_user: string;
+  smtp_from: string;
+  smtp_to: string;
+  is_active: boolean;
+}
+
+export interface NextCrawlInfo {
+  is_active: boolean;
+  next_crawl_at: string | null;
+  seconds_until: number | null;
+  schedule_time: string | null;
+  timezone: string | null;
+}
+
+export interface FeedTokenInfo {
+  feed_token: string;
+  feed_url: string;
+}
+
+export interface NotificationRoute {
+  id: string;
+  group_name: string | null;
+  webhook_type: string;
+  webhook_url_masked: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface KeywordExportItem {
+  text: string;
+  url: string | null;
+  source_type: string;
+  group_name: string | null;
+  crawl_interval_hours: number;
+  is_active: boolean;
 }

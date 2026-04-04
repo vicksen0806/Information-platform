@@ -1,14 +1,22 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.database import engine, Base
+from app.core.limiter import limiter
 from app.routers import auth, sources, keywords, crawl_jobs, digests, settings as settings_router, admin, public as public_router
+from app.routers import stats as stats_router
 # Import new models so SQLAlchemy registers them with Base.metadata
 import app.models.user_schedule_config  # noqa: F401
 import app.models.user_notification_config  # noqa: F401
+import app.models.user_email_config  # noqa: F401
+import app.models.digest_feedback  # noqa: F401
+import app.models.digest_star  # noqa: F401
+import app.models.notification_route  # noqa: F401
 
 
 @asynccontextmanager
@@ -17,6 +25,17 @@ async def lifespan(app: FastAPI):
     if settings.ENV == "development":
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+
+    # pg_trgm — enables trigram similarity search and fast LIKE/ILIKE for Chinese
+    from sqlalchemy import text
+    async with engine.begin() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_digests_title_trgm ON digests USING GIN (title gin_trgm_ops)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_digests_summary_trgm ON digests USING GIN (summary_md gin_trgm_ops)"
+        ))
 
     # Create first admin user if not exists
     await _ensure_admin()
@@ -53,6 +72,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -71,6 +93,7 @@ app.include_router(digests.router, prefix=API_PREFIX)
 app.include_router(settings_router.router, prefix=API_PREFIX)
 app.include_router(admin.router, prefix=API_PREFIX)
 app.include_router(public_router.router, prefix=API_PREFIX)
+app.include_router(stats_router.router, prefix=API_PREFIX)
 
 
 @app.get("/health")

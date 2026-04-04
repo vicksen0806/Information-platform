@@ -21,10 +21,10 @@ class CrawlJobResponse(BaseModel):
 
 class CrawlResultResponse(BaseModel):
     id: uuid.UUID
-    source_id: uuid.UUID
-    source_name: str | None = None
+    keyword_text: str | None = None
     http_status: int | None
     content_preview: str | None = None
+    article_count: int = 0
     error_message: str | None
     crawled_at: datetime
 

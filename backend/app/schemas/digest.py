@@ -15,6 +15,8 @@ class DigestResponse(BaseModel):
     is_read: bool
     share_token: str | None
     created_at: datetime
+    feedback: str | None = None  # 'positive' | 'negative' | None
+    is_starred: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -30,6 +32,8 @@ class DigestListItem(BaseModel):
     sources_count: int
     is_read: bool
     created_at: datetime
+    feedback: str | None = None  # 'positive' | 'negative' | None
+    is_starred: bool = False
 
     model_config = {"from_attributes": True}
 

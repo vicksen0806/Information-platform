@@ -1,8 +1,11 @@
 """
-Webhook notification service.
-Supports Feishu (飞书), WeCom (企业微信), and generic webhooks.
+Notification service.
+Supports Feishu (飞书), WeCom (企业微信), generic webhooks, and SMTP Email.
 """
 import re
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 import requests
 
 
@@ -111,3 +114,61 @@ def send_digest_notification(config, keywords: list[str], summary_md: str, creat
 
     except Exception as e:
         return False, f"Error: {str(e)[:200]}"
+
+
+def send_email_notification(config, keywords: list[str], summary_md: str, created_at: str) -> tuple[bool, str]:
+    """
+    Send digest notification via SMTP email.
+    config: UserEmailConfig ORM object
+    """
+    if not config.is_active:
+        return False, "Email notification disabled"
+
+    from app.core.security import decrypt_api_key
+    try:
+        password = decrypt_api_key(config.smtp_password_enc)
+    except Exception:
+        return False, "Failed to decrypt SMTP password"
+
+    try:
+        kw_str = ", ".join(keywords) if keywords else "Info Platform"
+        subject = f"[Info Platform] New Digest: {kw_str}"
+        excerpt = _strip_markdown(summary_md, max_chars=800)
+
+        # Build HTML body
+        html_kw = ", ".join(f"<strong>{k}</strong>" for k in keywords) if keywords else "—"
+        html_body = f"""
+<html><body style="font-family:sans-serif;max-width:600px;margin:0 auto;color:#333">
+<h2 style="color:#1a1a2e">New Digest Ready</h2>
+<p style="color:#666;font-size:14px">Keywords: {html_kw} &nbsp;·&nbsp; {created_at}</p>
+<hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+<pre style="white-space:pre-wrap;font-family:sans-serif;font-size:14px;line-height:1.6">{excerpt}</pre>
+<hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+<p style="color:#aaa;font-size:12px">Sent by Info Platform</p>
+</body></html>"""
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = config.smtp_from
+        msg["To"] = config.smtp_to
+
+        msg.attach(MIMEText(excerpt, "plain", "utf-8"))
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+        recipients = [r.strip() for r in config.smtp_to.split(",") if r.strip()]
+
+        if config.smtp_port == 465:
+            with smtplib.SMTP_SSL(config.smtp_host, config.smtp_port, timeout=15) as s:
+                s.login(config.smtp_user, password)
+                s.sendmail(config.smtp_from, recipients, msg.as_string())
+        else:
+            with smtplib.SMTP(config.smtp_host, config.smtp_port, timeout=15) as s:
+                s.ehlo()
+                s.starttls()
+                s.login(config.smtp_user, password)
+                s.sendmail(config.smtp_from, recipients, msg.as_string())
+
+        return True, f"Email sent to {config.smtp_to}"
+
+    except Exception as e:
+        return False, f"Email error: {str(e)[:200]}"

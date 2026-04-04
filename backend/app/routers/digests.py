@@ -1,15 +1,22 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, func, cast, String
+from sqlalchemy import select, or_, func, cast, String, update
+from pydantic import BaseModel
 
 from app.database import get_db
 from app.models.user import User
 from app.models.digest import Digest
+from app.models.digest_feedback import DigestFeedback
+from app.models.digest_star import DigestStar
 from app.core.dependencies import get_current_user
 from app.schemas.digest import DigestResponse, DigestUpdate, DigestListItem, UsageResponse, UsageMonthly
 
 router = APIRouter(prefix="/digests", tags=["digests"])
+
+
+class FeedbackCreate(BaseModel):
+    value: str  # 'positive' | 'negative'
 
 
 @router.get("", response_model=list[DigestListItem])
@@ -42,7 +49,49 @@ async def list_digests(
 
     stmt = stmt.order_by(Digest.created_at.desc()).limit(limit).offset(offset)
     result = await db.execute(stmt)
-    return result.scalars().all()
+    digests = result.scalars().all()
+
+    # Attach user's feedback for each digest
+    if digests:
+        digest_ids = [d.id for d in digests]
+        fb_result = await db.execute(
+            select(DigestFeedback.digest_id, DigestFeedback.value).where(
+                DigestFeedback.digest_id.in_(digest_ids),
+                DigestFeedback.user_id == current_user.id,
+            )
+        )
+        fb_map = {row[0]: row[1] for row in fb_result.all()}
+
+        star_result = await db.execute(
+            select(DigestStar.digest_id).where(
+                DigestStar.digest_id.in_(digest_ids),
+                DigestStar.user_id == current_user.id,
+            )
+        )
+        starred_ids = {row[0] for row in star_result.all()}
+
+        items = []
+        for d in digests:
+            item = DigestListItem.model_validate(d)
+            item.feedback = fb_map.get(d.id)
+            item.is_starred = d.id in starred_ids
+            items.append(item)
+        return items
+
+    return []
+
+
+@router.post("/mark-all-read", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_all_read(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark every unread digest as read for the current user."""
+    await db.execute(
+        update(Digest)
+        .where(Digest.user_id == current_user.id, Digest.is_read == False)
+        .values(is_read=True)
+    )
 
 
 @router.get("/usage", response_model=UsageResponse)
@@ -110,7 +159,25 @@ async def get_digest(
     if not digest.is_read:
         digest.is_read = True
         await db.flush()
-    return digest
+    # Attach feedback
+    fb_result = await db.execute(
+        select(DigestFeedback.value).where(
+            DigestFeedback.digest_id == digest_id,
+            DigestFeedback.user_id == current_user.id,
+        )
+    )
+    fb_row = fb_result.scalar_one_or_none()
+    star_result = await db.execute(
+        select(DigestStar).where(
+            DigestStar.digest_id == digest_id,
+            DigestStar.user_id == current_user.id,
+        )
+    )
+    is_starred = star_result.scalar_one_or_none() is not None
+    response = DigestResponse.model_validate(digest)
+    response.feedback = fb_row
+    response.is_starred = is_starred
+    return response
 
 
 @router.patch("/{digest_id}", response_model=DigestResponse)
@@ -178,6 +245,105 @@ async def unshare_digest(
     await db.flush()
     await db.refresh(digest)
     return digest
+
+
+@router.put("/{digest_id}/feedback", response_model=DigestResponse)
+async def set_feedback(
+    digest_id: uuid.UUID,
+    data: FeedbackCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upsert thumbs up/down feedback for a digest."""
+    if data.value not in ("positive", "negative"):
+        raise HTTPException(status_code=400, detail="value must be 'positive' or 'negative'")
+    digest = await _get_owned_digest(digest_id, current_user.id, db)
+
+    fb_result = await db.execute(
+        select(DigestFeedback).where(
+            DigestFeedback.digest_id == digest_id,
+            DigestFeedback.user_id == current_user.id,
+        )
+    )
+    fb = fb_result.scalar_one_or_none()
+    if fb:
+        fb.value = data.value
+    else:
+        fb = DigestFeedback(digest_id=digest_id, user_id=current_user.id, value=data.value)
+        db.add(fb)
+    await db.flush()
+
+    response = DigestResponse.model_validate(digest)
+    response.feedback = data.value
+    return response
+
+
+@router.post("/{digest_id}/star", response_model=DigestResponse)
+async def star_digest(
+    digest_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Star a digest. Idempotent."""
+    digest = await _get_owned_digest(digest_id, current_user.id, db)
+    existing = await db.execute(
+        select(DigestStar).where(
+            DigestStar.digest_id == digest_id,
+            DigestStar.user_id == current_user.id,
+        )
+    )
+    if not existing.scalar_one_or_none():
+        db.add(DigestStar(digest_id=digest_id, user_id=current_user.id))
+        await db.flush()
+    response = DigestResponse.model_validate(digest)
+    response.is_starred = True
+    return response
+
+
+@router.delete("/{digest_id}/star", response_model=DigestResponse)
+async def unstar_digest(
+    digest_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove star from a digest."""
+    digest = await _get_owned_digest(digest_id, current_user.id, db)
+    existing = await db.execute(
+        select(DigestStar).where(
+            DigestStar.digest_id == digest_id,
+            DigestStar.user_id == current_user.id,
+        )
+    )
+    star = existing.scalar_one_or_none()
+    if star:
+        await db.delete(star)
+        await db.flush()
+    response = DigestResponse.model_validate(digest)
+    response.is_starred = False
+    return response
+
+
+@router.delete("/{digest_id}/feedback", response_model=DigestResponse)
+async def delete_feedback(
+    digest_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove feedback for a digest."""
+    digest = await _get_owned_digest(digest_id, current_user.id, db)
+    fb_result = await db.execute(
+        select(DigestFeedback).where(
+            DigestFeedback.digest_id == digest_id,
+            DigestFeedback.user_id == current_user.id,
+        )
+    )
+    fb = fb_result.scalar_one_or_none()
+    if fb:
+        await db.delete(fb)
+    await db.flush()
+    response = DigestResponse.model_validate(digest)
+    response.feedback = None
+    return response
 
 
 async def _get_owned_digest(digest_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> Digest:

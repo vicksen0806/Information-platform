@@ -162,9 +162,10 @@ def _extract_basic(html: str) -> str:
 
 # ── Article fetcher ────────────────────────────────────────────────────────────
 
-def _fetch_article(url: str, session: requests.Session, referer: str = "") -> str | None:
+def _fetch_article(url: str, session: requests.Session, referer: str = "") -> tuple[str, str] | None:
     """
-    Fetch a single article and return clean full text.
+    Fetch a single article and return (clean_text, resolved_url).
+    resolved_url is the final URL after redirects (e.g. after Google News redirect).
     Returns None on any failure so callers can fall back to feed summary.
     """
     if _should_skip(url):
@@ -183,9 +184,9 @@ def _fetch_article(url: str, session: requests.Session, referer: str = "") -> st
         ct = resp.headers.get("Content-Type", "")
         if "html" not in ct:
             return None
-        text = _extract_with_readability(resp.text, url)
-        # Only use if we got meaningful content
-        return text if len(text.strip()) > 150 else None
+        resolved_url = resp.url  # final URL after all redirects
+        text = _extract_with_readability(resp.text, resolved_url)
+        return (text, resolved_url) if len(text.strip()) > 150 else None
     except Exception:
         return None
 
@@ -212,9 +213,12 @@ def _extract_rss_content(feed_url: str) -> tuple[str, int]:
             summary = BeautifulSoup(summary, "lxml").get_text().strip()
 
         # Attempt full-text extraction from the article URL
-        full_text = None
+        result = None
         if link:
-            full_text = _fetch_article(link, session, referer=feed_url)
+            result = _fetch_article(link, session, referer=feed_url)
+
+        full_text, resolved_url = (result if result else (None, link))
+        source_url = resolved_url or link
 
         # Use whichever is longer: full article vs feed summary
         if full_text and len(full_text) > max(len(summary), 200):
@@ -225,7 +229,7 @@ def _extract_rss_content(feed_url: str) -> tuple[str, int]:
             body = ""
 
         if title or body:
-            parts.append(f"## {title}\n{body}\nSource: {link}")
+            parts.append(f"## {title}\n{body}\nSource: {source_url}")
 
     content = "\n\n---\n\n".join(parts)
     return content, 200

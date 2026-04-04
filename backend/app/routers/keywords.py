@@ -1,5 +1,6 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -32,6 +33,44 @@ async def list_keywords(
     return result.scalars().all()
 
 
+@router.get("/article-stats")
+async def get_article_stats(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-keyword article counts (actual articles, not crawl runs) grouped by day (last 30 days)."""
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import func, cast, Date, text
+    from app.models.crawl_result import CrawlResult
+    from app.models.crawl_job import CrawlJob
+
+    since = datetime.now(timezone.utc) - timedelta(days=30)
+    # regexp_count counts "## " section headings which each represent one article
+    rows = await db.execute(
+        select(
+            CrawlResult.keyword_text,
+            cast(CrawlResult.crawled_at, Date).label("day"),
+            func.sum(
+                func.regexp_count(func.coalesce(CrawlResult.raw_content, ""), "## ")
+            ).label("cnt"),
+        )
+        .join(CrawlJob, CrawlResult.crawl_job_id == CrawlJob.id)
+        .where(
+            CrawlJob.user_id == current_user.id,
+            CrawlResult.crawled_at >= since,
+            CrawlResult.keyword_text.isnot(None),
+        )
+        .group_by(CrawlResult.keyword_text, "day")
+        .order_by(CrawlResult.keyword_text, "day")
+    )
+    stats: dict[str, list[dict]] = {}
+    for kw, day, cnt in rows.all():
+        if kw not in stats:
+            stats[kw] = []
+        stats[kw].append({"day": str(day), "count": int(cnt or 0)})
+    return stats
+
+
 @router.get("/groups", response_model=list[str])
 async def list_groups(
     current_user: User = Depends(get_current_user),
@@ -45,6 +84,78 @@ async def list_groups(
         .order_by(Keyword.group_name)
     )
     return [row for row in result.scalars().all()]
+
+
+@router.get("/export")
+async def export_keywords(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export all keywords as a JSON array."""
+    result = await db.execute(select(Keyword).where(Keyword.user_id == current_user.id).order_by(Keyword.created_at))
+    keywords = result.scalars().all()
+    return [
+        {
+            "text": kw.text,
+            "url": kw.url,
+            "source_type": kw.source_type,
+            "group_name": kw.group_name,
+            "crawl_interval_hours": kw.crawl_interval_hours,
+            "is_active": kw.is_active,
+        }
+        for kw in keywords
+    ]
+
+
+class KeywordImportItem(BaseModel):
+    text: str
+    url: str | None = None
+    source_type: str = "search"
+    group_name: str | None = None
+    crawl_interval_hours: int = 24
+    is_active: bool = True
+
+
+@router.post("/import")
+async def import_keywords(
+    data: list[KeywordImportItem],
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import keywords from JSON array. Skips duplicates (by text). Returns counts."""
+    existing_result = await db.execute(
+        select(Keyword.text).where(Keyword.user_id == current_user.id)
+    )
+    existing_texts = {row[0] for row in existing_result.all()}
+
+    count_result = await db.execute(select(Keyword).where(Keyword.user_id == current_user.id))
+    current_count = len(count_result.scalars().all())
+
+    added = 0
+    skipped = 0
+    for item in data:
+        if item.text in existing_texts:
+            skipped += 1
+            continue
+        if current_count >= MAX_KEYWORDS_PER_USER:
+            skipped += len(data) - added - skipped
+            break
+        kw = Keyword(
+            user_id=current_user.id,
+            text=item.text,
+            url=item.url or None,
+            source_type=item.source_type if item.url else "search",
+            group_name=item.group_name or None,
+            crawl_interval_hours=item.crawl_interval_hours,
+            is_active=item.is_active,
+        )
+        db.add(kw)
+        existing_texts.add(item.text)
+        current_count += 1
+        added += 1
+
+    await db.flush()
+    return {"added": added, "skipped": skipped}
 
 
 @router.post("", response_model=KeywordResponse, status_code=status.HTTP_201_CREATED)

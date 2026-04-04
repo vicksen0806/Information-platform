@@ -1,3 +1,5 @@
+import uuid
+from datetime import datetime
 from pydantic import BaseModel, model_validator
 
 
@@ -31,3 +33,27 @@ class NotificationConfigUpsert(BaseModel):
 class NotificationTestResult(BaseModel):
     success: bool
     message: str
+
+
+class NotificationRouteCreate(BaseModel):
+    group_name: str | None = None
+    webhook_type: str
+    webhook_url: str
+    is_active: bool = True
+
+
+class NotificationRouteResponse(BaseModel):
+    id: uuid.UUID
+    group_name: str | None
+    webhook_type: str
+    webhook_url: str
+    webhook_url_masked: str = ""
+    is_active: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+    @model_validator(mode="after")
+    def set_masked(self):
+        self.webhook_url_masked = _mask_url(self.webhook_url)
+        return self
