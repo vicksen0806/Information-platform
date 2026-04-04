@@ -1,18 +1,30 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { digestsApi, type DigestListItem } from "@/lib/api";
+import { useSearchParams, useRouter } from "next/navigation";
+import { digestsApi, keywordsApi, type DigestListItem } from "@/lib/api";
 
 export default function DigestsPage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
   const [digests, setDigests] = useState<DigestListItem[]>([]);
+  const [keywords, setKeywords] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
 
-  const fetchDigests = useCallback(async (q: string) => {
+  const keywordFilter = searchParams.get("keyword") || "";
+
+  // Load keyword list for filter tabs
+  useEffect(() => {
+    keywordsApi.list().then((kws) => setKeywords(kws.map((k) => k.text)));
+  }, []);
+
+  const fetchDigests = useCallback(async (q: string, kw: string) => {
     if (q) setSearching(true); else setLoading(true);
     try {
-      const list = await digestsApi.list(q || undefined);
+      const list = await digestsApi.list(q || undefined, kw || undefined);
       setDigests(list);
     } finally {
       setLoading(false);
@@ -20,14 +32,23 @@ export default function DigestsPage() {
     }
   }, []);
 
-  // Initial load
-  useEffect(() => { fetchDigests(""); }, [fetchDigests]);
+  // Initial load + keyword filter change
+  useEffect(() => {
+    fetchDigests(query, keywordFilter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keywordFilter]);
 
   // Debounced search
   useEffect(() => {
-    const timer = setTimeout(() => fetchDigests(query), 300);
+    const timer = setTimeout(() => fetchDigests(query, keywordFilter), 300);
     return () => clearTimeout(timer);
-  }, [query, fetchDigests]);
+  }, [query, keywordFilter, fetchDigests]);
+
+  function setKeywordFilter(kw: string) {
+    const params = new URLSearchParams();
+    if (kw) params.set("keyword", kw);
+    router.push(`/digests${params.toString() ? `?${params}` : ""}`);
+  }
 
   async function handleDelete(id: string, e: React.MouseEvent) {
     e.preventDefault();
@@ -44,8 +65,31 @@ export default function DigestsPage() {
     <div className="p-6 max-w-4xl mx-auto">
       <div className="mb-6">
         <h1 className="text-2xl font-bold">Digest History</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">All past digests — click to view</p>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          {keywordFilter ? `Showing digests for "${keywordFilter}"` : "All past digests — click to view"}
+        </p>
       </div>
+
+      {/* Keyword filter tabs */}
+      {keywords.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-4">
+          <button
+            onClick={() => setKeywordFilter("")}
+            className={`px-3 py-1 text-xs rounded-full border transition-colors ${!keywordFilter ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted"}`}
+          >
+            All
+          </button>
+          {keywords.map((kw) => (
+            <button
+              key={kw}
+              onClick={() => setKeywordFilter(keywordFilter === kw ? "" : kw)}
+              className={`px-3 py-1 text-xs rounded-full border transition-colors ${keywordFilter === kw ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted"}`}
+            >
+              {kw}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Search */}
       <div className="relative mb-4">
@@ -75,7 +119,7 @@ export default function DigestsPage() {
         <div className="text-center py-20 text-muted-foreground">Loading...</div>
       ) : digests.length === 0 ? (
         <div className="text-center py-20 text-muted-foreground">
-          {query ? `No results for "${query}"` : "No digests yet"}
+          {query ? `No results for "${query}"` : keywordFilter ? `No digests for "${keywordFilter}" yet` : "No digests yet"}
         </div>
       ) : (
         <div className="space-y-2">

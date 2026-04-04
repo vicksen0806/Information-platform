@@ -19,6 +19,7 @@ class Digest(Base):
     tokens_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     llm_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    share_token: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     user: Mapped["User"] = relationship("User", back_populates="digests")

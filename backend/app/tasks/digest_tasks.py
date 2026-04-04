@@ -133,5 +133,7 @@ def generate_digest(self, job_id: str, user_id: str):
             from app.services.notification_service import send_digest_notification
             from datetime import datetime, timezone as tz
             created_str = datetime.now(tz.utc).strftime("%Y-%m-%d %H:%M UTC")
-            final_summary = (existing_digest.summary_md if existing_digest else digest.summary_md) or ""
+            # existing_digest was updated in-place; new digest is in local var
+            final_digest = existing_digest if existing_digest else digest
+            final_summary = (final_digest.summary_md if final_digest else "") or ""
             send_digest_notification(notif_config, keyword_texts, final_summary, created_str)

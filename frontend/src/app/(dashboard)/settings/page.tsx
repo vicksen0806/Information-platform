@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-import { settingsApi, authApi, type LlmConfig, type User, type ScheduleConfig, type NotificationConfig } from "@/lib/api";
+import { settingsApi, digestsApi, authApi, type LlmConfig, type User, type ScheduleConfig, type NotificationConfig, type UsageStats } from "@/lib/api";
 
 const PROVIDERS = [
   { value: "volcengine", label: "Volcengine (Doubao)", model: "ep-m-20260322064927-gvkkg" },
@@ -34,6 +34,7 @@ const WEBHOOK_TYPES = [
 
 export default function SettingsPage() {
   const [user, setUser] = useState<User | null>(null);
+  const [usage, setUsage] = useState<UsageStats | null>(null);
 
   // LLM state
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
@@ -60,6 +61,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     authApi.me().then(setUser);
+    digestsApi.usage().then(setUsage).catch(() => {});
     settingsApi.getLlm().then((config) => {
       setLlmConfig(config);
       setLlmForm((prev) => ({ ...prev, provider: config.provider, model_name: config.model_name, base_url: config.base_url || "" }));
@@ -67,7 +69,8 @@ export default function SettingsPage() {
     settingsApi.getSchedule().then(setScheduleForm).catch(() => {});
     settingsApi.getNotification().then((c) => {
       setNotifConfig(c);
-      setNotifForm({ webhook_type: c.webhook_type, webhook_url: c.webhook_url, is_active: c.is_active });
+      // Don't pre-fill webhook_url — it's masked. User must re-enter to change.
+      setNotifForm({ webhook_type: c.webhook_type, webhook_url: "", is_active: c.is_active });
     }).catch(() => {});
   }, []);
 
@@ -229,6 +232,13 @@ export default function SettingsPage() {
         <p className="text-sm text-muted-foreground mb-4">Send a webhook message when a new digest is ready</p>
         {notifError && <div className="mb-3 px-3 py-2 text-sm text-destructive bg-destructive/10 rounded">{notifError}</div>}
         {notifSuccess && <div className="mb-3 px-3 py-2 text-sm text-green-700 bg-green-50 rounded">{notifSuccess}</div>}
+        {notifConfig && (
+          <div className="mb-4 p-3 bg-muted rounded text-sm">
+            Current: <strong>{notifConfig.webhook_type}</strong> · {notifConfig.webhook_url_masked}
+            · {notifConfig.is_active ? "Active" : "Disabled"}
+          </div>
+        )}
+
         <form onSubmit={handleSaveNotif} className="space-y-3">
           <div>
             <label className="block text-sm font-medium mb-1">Platform</label>
@@ -242,7 +252,7 @@ export default function SettingsPage() {
               value={notifForm.webhook_url}
               onChange={(e) => setNotifForm({ ...notifForm, webhook_url: e.target.value })}
               className="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."
+              placeholder={notifConfig ? "Enter new URL to update" : "https://open.feishu.cn/open-apis/bot/v2/hook/..."}
             />
           </div>
           <label className="flex items-center gap-2 text-sm cursor-pointer">
@@ -269,6 +279,50 @@ export default function SettingsPage() {
           <div className={`mt-3 p-3 text-sm rounded ${notifTestResult.success ? "bg-green-50 text-green-800" : "bg-destructive/10 text-destructive"}`}>
             {notifTestResult.success ? "✓ " : "✗ "}{notifTestResult.message}
           </div>
+        )}
+      </section>
+
+      {/* ── Usage ── */}
+      <section className="bg-background border border-border rounded-lg p-5">
+        <h2 className="font-semibold mb-1">API Usage</h2>
+        <p className="text-sm text-muted-foreground mb-4">LLM token consumption across all digests</p>
+        {usage ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 bg-muted rounded">
+                <p className="text-xs text-muted-foreground">This month</p>
+                <p className="text-xl font-bold mt-1">{usage.this_month_tokens.toLocaleString()}</p>
+                <p className="text-xs text-muted-foreground">{usage.this_month_digests} digests</p>
+              </div>
+              <div className="p-3 bg-muted rounded">
+                <p className="text-xs text-muted-foreground">All time</p>
+                <p className="text-xl font-bold mt-1">{usage.total_tokens.toLocaleString()}</p>
+                <p className="text-xs text-muted-foreground">{usage.total_digests} digests</p>
+              </div>
+            </div>
+            {usage.monthly.length > 1 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-2">Monthly breakdown</p>
+                <div className="space-y-1.5">
+                  {[...usage.monthly].reverse().map((m) => {
+                    const pct = usage.total_tokens > 0 ? Math.round((m.tokens / usage.total_tokens) * 100) : 0;
+                    return (
+                      <div key={m.month} className="flex items-center gap-3 text-xs">
+                        <span className="w-16 text-muted-foreground shrink-0">{m.month}</span>
+                        <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                          <div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} />
+                        </div>
+                        <span className="w-24 text-right text-muted-foreground">{m.tokens.toLocaleString()} tokens</span>
+                        <span className="w-16 text-right text-muted-foreground">{m.digests}d</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">No digests generated yet.</p>
         )}
       </section>
 

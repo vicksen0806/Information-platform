@@ -63,9 +63,12 @@ def crawl_all_users(self):
                 target_minute = settings.DAILY_CRAWL_MINUTE
 
             # Trigger if we're within 15 minutes of the scheduled time
+            # Use modular arithmetic to handle midnight rollover correctly
             current_total = now_local.hour * 60 + now_local.minute
             target_total = target_hour * 60 + target_minute
-            if abs(current_total - target_total) <= 15:
+            diff = (current_total - target_total) % (24 * 60)
+            # diff is minutes since target; also check wrap-around (i.e. up to 15min before)
+            if diff <= 15 or diff >= (24 * 60 - 15):
                 run_crawl_job.delay(None, str(user.id), triggered_by="schedule")
 
 
@@ -124,6 +127,13 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
         has_new_content = False
 
         for kw in keywords:
+            # Check per-keyword crawl interval — skip if crawled too recently
+            if kw.last_crawled_at is not None:
+                from datetime import timedelta
+                elapsed_hours = (datetime.now(timezone.utc) - kw.last_crawled_at).total_seconds() / 3600
+                if elapsed_hours < kw.crawl_interval_hours:
+                    continue  # Not due yet
+
             # Use specified URL or fall back to Google News RSS search
             if kw.url:
                 crawl_url = kw.url
@@ -134,6 +144,9 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
                 crawl_type = "rss"
 
             content, http_status, error = fetch_url_sync(crawl_url, crawl_type)
+
+            # Update last_crawled_at regardless of success/failure
+            kw.last_crawled_at = datetime.now(timezone.utc)
 
             if error or not content:
                 result = CrawlResult(

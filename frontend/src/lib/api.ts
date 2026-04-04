@@ -56,10 +56,12 @@ export const sourcesApi = {
 
 // ── Keywords ──────────────────────────────────────────────────────────────────
 export const keywordsApi = {
-  list: () => request<Keyword[]>("/keywords"),
-  create: (data: { text: string; url?: string; source_type?: string }) =>
+  list: (group?: string) =>
+    request<Keyword[]>(`/keywords${group !== undefined ? `?group=${encodeURIComponent(group)}` : ""}`),
+  listGroups: () => request<string[]>("/keywords/groups"),
+  create: (data: { text: string; url?: string; source_type?: string; group_name?: string; crawl_interval_hours?: number }) =>
     request<Keyword>("/keywords", { method: "POST", body: JSON.stringify(data) }),
-  update: (id: string, data: { is_active?: boolean; url?: string; source_type?: string }) =>
+  update: (id: string, data: { is_active?: boolean; url?: string; source_type?: string; group_name?: string; crawl_interval_hours?: number }) =>
     request<Keyword>(`/keywords/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   delete: (id: string) => request(`/keywords/${id}`, { method: "DELETE" }),
 };
@@ -73,12 +75,26 @@ export const crawlJobsApi = {
 
 // ── Digests ───────────────────────────────────────────────────────────────────
 export const digestsApi = {
-  list: (q?: string) => request<DigestListItem[]>(`/digests${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  list: (q?: string, keyword?: string) => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (keyword) params.set("keyword", keyword);
+    const qs = params.toString();
+    return request<DigestListItem[]>(`/digests${qs ? `?${qs}` : ""}`);
+  },
   get: (id: string) => request<Digest>(`/digests/${id}`),
+  usage: () => request<UsageStats>("/digests/usage"),
   markRead: (id: string, is_read: boolean) =>
     request<Digest>(`/digests/${id}`, { method: "PATCH", body: JSON.stringify({ is_read }) }),
   delete: (id: string) => request(`/digests/${id}`, { method: "DELETE" }),
   regenerate: (id: string) => request<Digest>(`/digests/${id}/regenerate`, { method: "POST" }),
+  share: (id: string) => request<Digest>(`/digests/${id}/share`, { method: "POST" }),
+  unshare: (id: string) => request<Digest>(`/digests/${id}/share`, { method: "DELETE" }),
+};
+
+// ── Public (no-auth) ──────────────────────────────────────────────────────────
+export const publicApi = {
+  getSharedDigest: (token: string) => request<Digest>(`/public/digests/${token}`),
 };
 
 // ── Settings ──────────────────────────────────────────────────────────────────
@@ -135,6 +151,9 @@ export interface Keyword {
   is_active: boolean;
   url: string | null;
   source_type: string;
+  group_name: string | null;
+  crawl_interval_hours: number;
+  last_crawled_at: string | null;
   created_at: string;
 }
 
@@ -167,6 +186,7 @@ export interface Digest extends DigestListItem {
   keywords_used: string[] | null;
   tokens_used: number;
   llm_model: string | null;
+  share_token: string | null;
 }
 
 export interface LlmConfig {
@@ -186,5 +206,20 @@ export interface ScheduleConfig {
 export interface NotificationConfig {
   webhook_type: string;
   webhook_url: string;
+  webhook_url_masked: string;
   is_active: boolean;
+}
+
+export interface UsageMonthly {
+  month: string;
+  tokens: number;
+  digests: number;
+}
+
+export interface UsageStats {
+  total_tokens: number;
+  total_digests: number;
+  this_month_tokens: number;
+  this_month_digests: number;
+  monthly: UsageMonthly[];
 }

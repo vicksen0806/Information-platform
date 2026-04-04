@@ -94,9 +94,20 @@ def send_digest_notification(config, keywords: list[str], summary_md: str, creat
             timeout=10,
             headers={"Content-Type": "application/json"},
         )
-        if resp.status_code == 200:
-            return True, "Notification sent"
-        return False, f"Webhook returned {resp.status_code}: {resp.text[:200]}"
+        if resp.status_code != 200:
+            return False, f"Webhook returned HTTP {resp.status_code}: {resp.text[:200]}"
+
+        # Feishu and WeCom both return JSON with a non-zero code on error
+        try:
+            body = resp.json()
+            code = body.get("code", 0) or body.get("errcode", 0)
+            if code != 0:
+                msg = body.get("msg") or body.get("errmsg") or str(body)
+                return False, f"Webhook error (code {code}): {msg}"
+        except Exception:
+            pass  # Non-JSON response — treat HTTP 200 as success
+
+        return True, "Notification sent"
 
     except Exception as e:
         return False, f"Error: {str(e)[:200]}"

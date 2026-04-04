@@ -162,10 +162,13 @@ async def upsert_notification(
     result = await db.execute(select(UserNotificationConfig).where(UserNotificationConfig.user_id == current_user.id))
     config = result.scalar_one_or_none()
     if config:
-        config.webhook_url = data.webhook_url
+        if data.webhook_url:  # Only update URL if a new one is provided
+            config.webhook_url = data.webhook_url
         config.webhook_type = data.webhook_type
         config.is_active = data.is_active
     else:
+        if not data.webhook_url:
+            raise HTTPException(status_code=400, detail="Webhook URL required for first-time setup")
         config = UserNotificationConfig(
             user_id=current_user.id,
             webhook_url=data.webhook_url,

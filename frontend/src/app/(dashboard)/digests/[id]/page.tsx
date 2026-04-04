@@ -12,6 +12,8 @@ export default function DigestDetailPage() {
   const [digest, setDigest] = useState<Digest | null>(null);
   const [loading, setLoading] = useState(true);
   const [regenerating, setRegenerating] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [copyMsg, setCopyMsg] = useState("");
 
   useEffect(() => {
     digestsApi.get(id).then(setDigest).finally(() => setLoading(false));
@@ -34,6 +36,28 @@ export default function DigestDetailPage() {
     router.push("/digests");
   }
 
+  async function handleShare() {
+    if (!digest) return;
+    setSharing(true);
+    try {
+      const updated = digest.share_token
+        ? await digestsApi.unshare(digest.id)
+        : await digestsApi.share(digest.id);
+      setDigest(updated);
+    } finally {
+      setSharing(false);
+    }
+  }
+
+  function handleCopyLink() {
+    if (!digest?.share_token) return;
+    const url = `${window.location.origin}/share/${digest.share_token}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopyMsg("Copied!");
+      setTimeout(() => setCopyMsg(""), 2000);
+    });
+  }
+
   if (loading) return <div className="p-6 text-center text-muted-foreground">Loading...</div>;
   if (!digest) return <div className="p-6 text-center text-muted-foreground">Digest not found</div>;
 
@@ -44,7 +68,32 @@ export default function DigestDetailPage() {
         <Link href="/digests" className="text-sm text-muted-foreground hover:text-foreground">
           ← Back to list
         </Link>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap justify-end">
+          {digest.share_token ? (
+            <>
+              <button
+                onClick={handleCopyLink}
+                className="px-3 py-1.5 text-xs bg-primary/10 text-primary border border-primary/30 rounded hover:bg-primary/20"
+              >
+                {copyMsg || "Copy link"}
+              </button>
+              <button
+                onClick={handleShare}
+                disabled={sharing}
+                className="px-3 py-1.5 text-xs border border-border rounded hover:bg-muted disabled:opacity-50"
+              >
+                {sharing ? "..." : "Revoke share"}
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={handleShare}
+              disabled={sharing}
+              className="px-3 py-1.5 text-xs border border-border rounded hover:bg-muted disabled:opacity-50"
+            >
+              {sharing ? "..." : "Share"}
+            </button>
+          )}
           <button
             onClick={handleRegenerate}
             disabled={regenerating}
@@ -61,20 +110,34 @@ export default function DigestDetailPage() {
         </div>
       </div>
 
+      {/* Shared indicator */}
+      {digest.share_token && (
+        <div className="mb-4 px-3 py-2 text-xs text-primary bg-primary/5 border border-primary/20 rounded flex items-center gap-2">
+          <span>Public link active —</span>
+          <span className="font-mono text-muted-foreground truncate max-w-xs">
+            {typeof window !== "undefined" ? `${window.location.origin}/share/${digest.share_token}` : ""}
+          </span>
+        </div>
+      )}
+
       {/* Meta */}
       <div className="mb-4 text-xs text-muted-foreground flex flex-wrap gap-3">
         <span>{new Date(digest.created_at).toLocaleString("en-US")}</span>
         <span>{digest.sources_count} sources</span>
         {digest.llm_model && <span>Model: {digest.llm_model}</span>}
-        {digest.tokens_used > 0 && <span>Tokens: {digest.tokens_used}</span>}
+        {digest.tokens_used > 0 && <span>Tokens: {digest.tokens_used.toLocaleString()}</span>}
       </div>
 
       {digest.keywords_used && digest.keywords_used.length > 0 && (
         <div className="mb-4 flex flex-wrap gap-1.5">
           {digest.keywords_used.map((kw) => (
-            <span key={kw} className="px-2 py-0.5 text-xs bg-primary/10 text-primary rounded-full">
+            <Link
+              key={kw}
+              href={`/digests?keyword=${encodeURIComponent(kw)}`}
+              className="px-2 py-0.5 text-xs bg-primary/10 text-primary rounded-full hover:bg-primary/20 transition-colors"
+            >
               {kw}
-            </span>
+            </Link>
           ))}
         </div>
       )}

@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Boolean, DateTime, ForeignKey, UniqueConstraint, func
+from sqlalchemy import String, Boolean, DateTime, Integer, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
@@ -16,6 +16,9 @@ class Keyword(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     source_type: Mapped[str] = mapped_column(String(20), nullable=False, default="search")
+    group_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    crawl_interval_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
+    last_crawled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped["User"] = relationship("User", back_populates="keywords")

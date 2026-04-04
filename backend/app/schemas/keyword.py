@@ -7,6 +7,8 @@ class KeywordCreate(BaseModel):
     text: str
     url: str | None = None
     source_type: str = "search"  # search | webpage | rss
+    group_name: str | None = None
+    crawl_interval_hours: int = 24
 
     @field_validator("text")
     @classmethod
@@ -18,11 +20,20 @@ class KeywordCreate(BaseModel):
             raise ValueError("Keyword cannot exceed 200 characters")
         return v
 
+    @field_validator("crawl_interval_hours")
+    @classmethod
+    def validate_interval(cls, v: int) -> int:
+        if v not in (1, 6, 12, 24, 72, 168):
+            raise ValueError("crawl_interval_hours must be one of: 1, 6, 12, 24, 72, 168")
+        return v
+
 
 class KeywordUpdate(BaseModel):
     is_active: bool | None = None
     url: str | None = None
     source_type: str | None = None
+    group_name: str | None = None
+    crawl_interval_hours: int | None = None
 
 
 class KeywordResponse(BaseModel):
@@ -31,6 +42,9 @@ class KeywordResponse(BaseModel):
     is_active: bool
     url: str | None
     source_type: str
+    group_name: str | None
+    crawl_interval_hours: int
+    last_crawled_at: datetime | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

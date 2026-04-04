@@ -2,24 +2,50 @@
 import { useState, useEffect } from "react";
 import { keywordsApi, type Keyword } from "@/lib/api";
 
+const INTERVAL_OPTIONS = [
+  { value: 1, label: "Every hour" },
+  { value: 6, label: "Every 6 hours" },
+  { value: 12, label: "Every 12 hours" },
+  { value: 24, label: "Daily" },
+  { value: 72, label: "Every 3 days" },
+  { value: 168, label: "Weekly" },
+];
+
+function intervalLabel(hours: number) {
+  return INTERVAL_OPTIONS.find((o) => o.value === hours)?.label ?? `Every ${hours}h`;
+}
+
 export default function KeywordsPage() {
   const [keywords, setKeywords] = useState<Keyword[]>([]);
+  const [groups, setGroups] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [filterGroup, setFilterGroup] = useState<string | null>(null);
 
+  // Add form state
   const [newText, setNewText] = useState("");
   const [newUrl, setNewUrl] = useState("");
   const [newSourceType, setNewSourceType] = useState("webpage");
   const [hasUrl, setHasUrl] = useState(false);
+  const [newGroup, setNewGroup] = useState("");
+  const [newInterval, setNewInterval] = useState(24);
   const [saving, setSaving] = useState(false);
 
+  // Edit state
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editUrl, setEditUrl] = useState("");
   const [editSourceType, setEditSourceType] = useState("webpage");
   const [editHasUrl, setEditHasUrl] = useState(false);
+  const [editGroup, setEditGroup] = useState("");
+  const [editInterval, setEditInterval] = useState(24);
 
   useEffect(() => {
-    keywordsApi.list().then(setKeywords).finally(() => setLoading(false));
+    Promise.all([keywordsApi.list(), keywordsApi.listGroups()])
+      .then(([kws, grps]) => {
+        setKeywords(kws);
+        setGroups(grps);
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   async function handleAdd(e: React.FormEvent) {
@@ -33,11 +59,19 @@ export default function KeywordsPage() {
         text,
         url: hasUrl && newUrl.trim() ? newUrl.trim() : undefined,
         source_type: hasUrl && newUrl.trim() ? newSourceType : "search",
+        group_name: newGroup.trim() || undefined,
+        crawl_interval_hours: newInterval,
       });
       setKeywords((prev) => [...prev, kw]);
+      // Update groups list if new group was used
+      if (newGroup.trim() && !groups.includes(newGroup.trim())) {
+        setGroups((prev) => [...prev, newGroup.trim()].sort());
+      }
       setNewText("");
       setNewUrl("");
       setHasUrl(false);
+      setNewGroup("");
+      setNewInterval(24);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -61,6 +95,8 @@ export default function KeywordsPage() {
     setEditHasUrl(!!kw.url);
     setEditUrl(kw.url || "");
     setEditSourceType(kw.source_type === "search" ? "webpage" : kw.source_type);
+    setEditGroup(kw.group_name || "");
+    setEditInterval(kw.crawl_interval_hours);
   }
 
   async function handleSaveEdit(kw: Keyword) {
@@ -68,12 +104,35 @@ export default function KeywordsPage() {
     const updated = await keywordsApi.update(kw.id, {
       url: url || undefined,
       source_type: url ? editSourceType : "search",
+      group_name: editGroup.trim() || undefined,
+      crawl_interval_hours: editInterval,
     });
     setKeywords((prev) => prev.map((k) => (k.id === kw.id ? updated : k)));
+    // Refresh groups
+    const grps = await keywordsApi.listGroups();
+    setGroups(grps);
     setEditingId(null);
   }
 
   const activeCount = keywords.filter((k) => k.is_active).length;
+
+  // Group display
+  const filteredKeywords = filterGroup !== null
+    ? keywords.filter((k) => (filterGroup === "" ? !k.group_name : k.group_name === filterGroup))
+    : keywords;
+
+  // Group keywords by group_name for display
+  const grouped: Record<string, Keyword[]> = {};
+  for (const kw of filteredKeywords) {
+    const g = kw.group_name || "";
+    if (!grouped[g]) grouped[g] = [];
+    grouped[g].push(kw);
+  }
+  const groupKeys = Object.keys(grouped).sort((a, b) => {
+    if (a === "") return 1;
+    if (b === "") return -1;
+    return a.localeCompare(b);
+  });
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
@@ -83,6 +142,33 @@ export default function KeywordsPage() {
           Each keyword is a crawl source. Leave URL blank to search Google News automatically · {activeCount} / {keywords.length} active
         </p>
       </div>
+
+      {/* Group filter tabs */}
+      {groups.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-4">
+          <button
+            onClick={() => setFilterGroup(null)}
+            className={`px-3 py-1 text-xs rounded-full border transition-colors ${filterGroup === null ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted"}`}
+          >
+            All
+          </button>
+          {groups.map((g) => (
+            <button
+              key={g}
+              onClick={() => setFilterGroup(filterGroup === g ? null : g)}
+              className={`px-3 py-1 text-xs rounded-full border transition-colors ${filterGroup === g ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted"}`}
+            >
+              {g}
+            </button>
+          ))}
+          <button
+            onClick={() => setFilterGroup("")}
+            className={`px-3 py-1 text-xs rounded-full border transition-colors ${filterGroup === "" ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted"}`}
+          >
+            Ungrouped
+          </button>
+        </div>
+      )}
 
       {/* Add form */}
       <form onSubmit={handleAdd} className="mb-6 bg-background border border-border rounded-lg p-4 space-y-3">
@@ -101,6 +187,34 @@ export default function KeywordsPage() {
           >
             {saving ? "Adding..." : "Add"}
           </button>
+        </div>
+
+        <div className="flex gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-muted-foreground whitespace-nowrap">Group (optional)</label>
+            <input
+              value={newGroup}
+              onChange={(e) => setNewGroup(e.target.value)}
+              list="group-suggestions"
+              className="px-2 py-1 border border-input rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-ring w-28"
+              placeholder="e.g. Tech"
+            />
+            <datalist id="group-suggestions">
+              {groups.map((g) => <option key={g} value={g} />)}
+            </datalist>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-muted-foreground">Crawl frequency</label>
+            <select
+              value={newInterval}
+              onChange={(e) => setNewInterval(Number(e.target.value))}
+              className="px-2 py-1 border border-input rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              {INTERVAL_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
@@ -146,97 +260,147 @@ export default function KeywordsPage() {
           No keywords yet — add topics you want to follow
         </div>
       ) : (
-        <div className="space-y-2">
-          {keywords.map((kw) => (
-            <div
-              key={kw.id}
-              className={`bg-background border rounded-lg px-4 py-3 transition-colors ${
-                kw.is_active ? "border-border" : "border-border opacity-50"
-              }`}
-            >
-              {editingId === kw.id ? (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm">{kw.text}</span>
-                    <span className="text-xs text-muted-foreground">Edit source</span>
-                  </div>
-                  <label className="flex items-center gap-2 text-sm cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={editHasUrl}
-                      onChange={(e) => setEditHasUrl(e.target.checked)}
-                    />
-                    <span className="text-muted-foreground">Pin to a specific URL</span>
-                  </label>
-                  {editHasUrl && (
-                    <div className="flex gap-2 pl-6">
-                      <select
-                        value={editSourceType}
-                        onChange={(e) => setEditSourceType(e.target.value)}
-                        className="px-2 py-1.5 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                      >
-                        <option value="webpage">Webpage</option>
-                        <option value="rss">RSS</option>
-                      </select>
-                      <input
-                        value={editUrl}
-                        onChange={(e) => setEditUrl(e.target.value)}
-                        className="flex-1 px-3 py-1.5 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                        placeholder="https://..."
-                      />
-                    </div>
-                  )}
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleSaveEdit(kw)}
-                      className="px-3 py-1 text-xs bg-primary text-primary-foreground rounded hover:opacity-90"
-                    >
-                      Save
-                    </button>
-                    <button
-                      onClick={() => setEditingId(null)}
-                      className="px-3 py-1 text-xs border border-border rounded hover:bg-muted"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center justify-between">
-                  <div className="min-w-0">
-                    <span className="font-medium text-sm">{kw.text}</span>
-                    <div className="text-xs text-muted-foreground mt-0.5">
-                      {kw.url ? (
-                        <span className="truncate block max-w-sm">
-                          {kw.source_type === "rss" ? "RSS · " : "Webpage · "}{kw.url}
-                        </span>
-                      ) : (
-                        <span>Google News auto-search</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0 ml-4">
-                    <button
-                      onClick={() => startEdit(kw)}
-                      className="px-2.5 py-1 text-xs border border-border rounded hover:bg-muted"
-                    >
-                      Configure
-                    </button>
-                    <button
-                      onClick={() => handleToggle(kw)}
-                      className="px-2.5 py-1 text-xs border border-border rounded hover:bg-muted"
-                    >
-                      {kw.is_active ? "Disable" : "Enable"}
-                    </button>
-                    <button
-                      onClick={() => handleDelete(kw.id)}
-                      className="px-2.5 py-1 text-xs text-destructive border border-destructive/30 rounded hover:bg-destructive/10"
-                    >
-                      Delete
-                    </button>
-                  </div>
+        <div className="space-y-4">
+          {groupKeys.map((groupKey) => (
+            <div key={groupKey}>
+              {groupKey && (
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{groupKey}</span>
+                  <div className="flex-1 h-px bg-border" />
                 </div>
               )}
+              <div className="space-y-2">
+                {grouped[groupKey].map((kw) => (
+                  <div
+                    key={kw.id}
+                    className={`bg-background border rounded-lg px-4 py-3 transition-colors ${
+                      kw.is_active ? "border-border" : "border-border opacity-50"
+                    }`}
+                  >
+                    {editingId === kw.id ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm">{kw.text}</span>
+                          <span className="text-xs text-muted-foreground">Edit</span>
+                        </div>
+
+                        <div className="flex gap-3 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            <label className="text-xs text-muted-foreground">Group</label>
+                            <input
+                              value={editGroup}
+                              onChange={(e) => setEditGroup(e.target.value)}
+                              list="group-suggestions"
+                              className="px-2 py-1 border border-input rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-ring w-28"
+                              placeholder="Group name"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <label className="text-xs text-muted-foreground">Frequency</label>
+                            <select
+                              value={editInterval}
+                              onChange={(e) => setEditInterval(Number(e.target.value))}
+                              className="px-2 py-1 border border-input rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                            >
+                              {INTERVAL_OPTIONS.map((o) => (
+                                <option key={o.value} value={o.value}>{o.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={editHasUrl}
+                            onChange={(e) => setEditHasUrl(e.target.checked)}
+                          />
+                          <span className="text-muted-foreground">Pin to a specific URL</span>
+                        </label>
+                        {editHasUrl && (
+                          <div className="flex gap-2 pl-6">
+                            <select
+                              value={editSourceType}
+                              onChange={(e) => setEditSourceType(e.target.value)}
+                              className="px-2 py-1.5 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                            >
+                              <option value="webpage">Webpage</option>
+                              <option value="rss">RSS</option>
+                            </select>
+                            <input
+                              value={editUrl}
+                              onChange={(e) => setEditUrl(e.target.value)}
+                              className="flex-1 px-3 py-1.5 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                              placeholder="https://..."
+                            />
+                          </div>
+                        )}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleSaveEdit(kw)}
+                            className="px-3 py-1 text-xs bg-primary text-primary-foreground rounded hover:opacity-90"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={() => setEditingId(null)}
+                            className="px-3 py-1 text-xs border border-border rounded hover:bg-muted"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm">{kw.text}</span>
+                            {kw.crawl_interval_hours !== 24 && (
+                              <span className="text-xs px-1.5 py-0.5 bg-muted rounded text-muted-foreground">
+                                {intervalLabel(kw.crawl_interval_hours)}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            {kw.url ? (
+                              <span className="truncate block max-w-sm">
+                                {kw.source_type === "rss" ? "RSS · " : "Webpage · "}{kw.url}
+                              </span>
+                            ) : (
+                              <span>Google News auto-search</span>
+                            )}
+                            {kw.last_crawled_at && (
+                              <span className="ml-2 text-muted-foreground/70">
+                                · Last crawled {new Date(kw.last_crawled_at).toLocaleString("en-US")}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 ml-4">
+                          <button
+                            onClick={() => startEdit(kw)}
+                            className="px-2.5 py-1 text-xs border border-border rounded hover:bg-muted"
+                          >
+                            Configure
+                          </button>
+                          <button
+                            onClick={() => handleToggle(kw)}
+                            className="px-2.5 py-1 text-xs border border-border rounded hover:bg-muted"
+                          >
+                            {kw.is_active ? "Disable" : "Enable"}
+                          </button>
+                          <button
+                            onClick={() => handleDelete(kw.id)}
+                            className="px-2.5 py-1 text-xs text-destructive border border-destructive/30 rounded hover:bg-destructive/10"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           ))}
         </div>
