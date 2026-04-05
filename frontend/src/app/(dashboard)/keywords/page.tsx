@@ -86,6 +86,7 @@ export default function KeywordsPage() {
   const [editHasUrl, setEditHasUrl] = useState(false);
   const [editGroup, setEditGroup] = useState("");
   const [editInterval, setEditInterval] = useState(24);
+  const [editRequiresJs, setEditRequiresJs] = useState(false);
 
   useEffect(() => {
     Promise.all([keywordsApi.list(), keywordsApi.listGroups()])
@@ -162,6 +163,7 @@ export default function KeywordsPage() {
     setEditSourceType(kw.source_type === "search" ? "webpage" : kw.source_type);
     setEditGroup(kw.group_name || "");
     setEditInterval(kw.crawl_interval_hours);
+    setEditRequiresJs(kw.requires_js || false);
   }
 
   async function handleSaveEdit(kw: Keyword) {
@@ -171,6 +173,7 @@ export default function KeywordsPage() {
       source_type: url ? editSourceType : "search",
       group_name: editGroup.trim() || undefined,
       crawl_interval_hours: editInterval,
+      requires_js: editRequiresJs,
     });
     setKeywords((prev) => prev.map((k) => (k.id === kw.id ? updated : k)));
     const grps = await keywordsApi.listGroups();
@@ -390,6 +393,11 @@ export default function KeywordsPage() {
                             />
                           </div>
                         )}
+                        <label className="flex items-center gap-2 text-xs cursor-pointer text-muted-foreground">
+                          <input type="checkbox" checked={editRequiresJs} onChange={(e) => setEditRequiresJs(e.target.checked)} />
+                          {t("kw_requires_js")}
+                          <span className="text-xs opacity-60">({t("kw_requires_js_hint")})</span>
+                        </label>
                         <div className="flex gap-2">
                           <button onClick={() => handleSaveEdit(kw)} className="px-3 py-1 text-xs bg-primary text-primary-foreground rounded hover:opacity-90">{t("save")}</button>
                           <button onClick={() => setEditingId(null)} className="px-3 py-1 text-xs border border-border rounded hover:bg-muted">{t("cancel")}</button>

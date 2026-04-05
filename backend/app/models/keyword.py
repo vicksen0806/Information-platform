@@ -19,6 +19,7 @@ class Keyword(Base):
     group_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     crawl_interval_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
     last_crawled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    requires_js: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped["User"] = relationship("User", back_populates="keywords")

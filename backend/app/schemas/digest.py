@@ -17,6 +17,7 @@ class DigestResponse(BaseModel):
     created_at: datetime
     feedback: str | None = None  # 'positive' | 'negative' | None
     is_starred: bool = False
+    importance_score: float | None = None
 
     model_config = {"from_attributes": True}
 
@@ -34,6 +35,7 @@ class DigestListItem(BaseModel):
     created_at: datetime
     feedback: str | None = None  # 'positive' | 'negative' | None
     is_starred: bool = False
+    importance_score: float | None = None
 
     model_config = {"from_attributes": True}
 

@@ -10,6 +10,8 @@ from app.database import engine, Base
 from app.core.limiter import limiter
 from app.routers import auth, sources, keywords, crawl_jobs, digests, settings as settings_router, admin, public as public_router
 from app.routers import stats as stats_router
+from app.routers import export as export_router
+from app.routers import push as push_router
 # Import new models so SQLAlchemy registers them with Base.metadata
 import app.models.user_schedule_config  # noqa: F401
 import app.models.user_notification_config  # noqa: F401
@@ -17,6 +19,9 @@ import app.models.user_email_config  # noqa: F401
 import app.models.digest_feedback  # noqa: F401
 import app.models.digest_star  # noqa: F401
 import app.models.notification_route  # noqa: F401
+import app.models.audit_log  # noqa: F401
+import app.models.user_notion_config  # noqa: F401
+import app.models.push_subscription  # noqa: F401
 
 
 @asynccontextmanager
@@ -26,8 +31,20 @@ async def lifespan(app: FastAPI):
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
-    # pg_trgm — enables trigram similarity search and fast LIKE/ILIKE for Chinese
+    # Schema migrations for existing tables (idempotent ALTER TABLE)
     from sqlalchemy import text
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "ALTER TABLE user_llm_configs ADD COLUMN IF NOT EXISTS summary_style VARCHAR(20) NOT NULL DEFAULT 'concise'"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE digests ADD COLUMN IF NOT EXISTS importance_score FLOAT"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS requires_js BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+
+    # pg_trgm — enables trigram similarity search and fast LIKE/ILIKE for Chinese
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         await conn.execute(text(
@@ -36,6 +53,35 @@ async def lifespan(app: FastAPI):
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_digests_summary_trgm ON digests USING GIN (summary_md gin_trgm_ops)"
         ))
+
+    # pg_jieba — Chinese full-text search (installed only if the extension exists)
+    async with engine.begin() as conn:
+        try:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_jieba"))
+            # Create jieba text search configuration (idempotent)
+            await conn.execute(text("""
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_ts_config WHERE cfgname = 'jieba_cfg'
+                    ) THEN
+                        CREATE TEXT SEARCH CONFIGURATION jieba_cfg (PARSER = jieba);
+                        ALTER TEXT SEARCH CONFIGURATION jieba_cfg
+                            ADD MAPPING FOR n,v,a,i,e,l WITH simple;
+                    END IF;
+                END $$
+            """))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_digests_title_jieba ON digests "
+                "USING GIN (to_tsvector('jieba_cfg', coalesce(title,'')))"
+            ))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_digests_summary_jieba ON digests "
+                "USING GIN (to_tsvector('jieba_cfg', coalesce(summary_md,'')))"
+            ))
+            # Activate jieba search config for runtime queries
+            settings.FTS_CONFIG = "jieba_cfg"
+        except Exception:
+            pass  # pg_jieba not installed — fall back to simple/trgm search
 
     # Create first admin user if not exists
     await _ensure_admin()
@@ -94,6 +140,8 @@ app.include_router(settings_router.router, prefix=API_PREFIX)
 app.include_router(admin.router, prefix=API_PREFIX)
 app.include_router(public_router.router, prefix=API_PREFIX)
 app.include_router(stats_router.router, prefix=API_PREFIX)
+app.include_router(export_router.router, prefix=API_PREFIX)
+app.include_router(push_router.router, prefix=API_PREFIX)
 
 
 @app.get("/health")

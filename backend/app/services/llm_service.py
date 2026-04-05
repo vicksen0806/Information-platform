@@ -15,6 +15,7 @@ def generate_digest_sync(
     config,
     keywords: list[str],
     crawled_contents: list[dict],  # [{keyword, content, group?}]
+    feedback_hint: str | None = None,
 ) -> dict:
     """
     Call LLM to generate a structured digest. Returns {title, summary_md, tokens_used}.
@@ -57,6 +58,13 @@ def generate_digest_sync(
             "再在其下用 `### 关键词` 列出各关键词内容。未分组的关键词直接用 `### 关键词` 即可。\n"
         )
 
+    style = getattr(config, "summary_style", "concise") or "concise"
+    style_instruction = {
+        "concise": "请用中文输出，语言简洁准确，每个要点一句话点到为止。",
+        "detailed": "请用中文输出，每个要点展开2-3句详细说明，包含背景、数据和影响分析。",
+        "academic": "请用中文输出，使用正式学术语气，客观陈述事实，引用数据和来源，避免口语表达。",
+    }.get(style, "请用中文输出，语言简洁准确。")
+
     default_system_prompt = (
         "你是一个专业的信息助理，负责将用户关注的各类关键词的抓取内容整理成结构清晰的每日摘要。\n"
         "输出必须严格使用以下 Markdown 结构：\n\n"
@@ -72,7 +80,7 @@ def generate_digest_sync(
         "1. 每个关键词单独一节，只写与该关键词相关的内容\n"
         "2. 每条要点必须在末尾附上原文来源链接 ([来源](URL))，URL取自 'Source: URL' 字段\n"
         "3. 没有来源链接时省略链接\n"
-        "请用中文输出，语言简洁准确。"
+        f"{style_instruction}"
     )
     system_prompt = (config.prompt_template.strip() if getattr(config, "prompt_template", None) else None) or default_system_prompt
 
@@ -80,6 +88,7 @@ def generate_digest_sync(
         f"用户关注的关键词：{keywords_str}\n\n"
         f"以下是按关键词分组的今日抓取内容：\n\n{combined_content}\n\n"
         "请严格按照系统提示的 Markdown 结构生成摘要。"
+        + (f"\n\n[用户偏好参考：{feedback_hint}]" if feedback_hint else "")
     )
 
     response = client.chat.completions.create(
@@ -102,11 +111,39 @@ def generate_digest_sync(
     if lines and lines[0].startswith("#"):
         title = lines[0].lstrip("#").strip()
 
+    # Score importance: quick follow-up call (max 20 tokens)
+    importance_score: float | None = None
+    try:
+        score_response = client.chat.completions.create(
+            model=config.model_name,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"以下是一份信息摘要的标题和开头内容，请给它的重要性打分（0.0~1.0），"
+                        f"1.0表示非常重要/紧急，0.0表示普通日常信息。"
+                        f"只输出一个数字，不要其他任何内容。\n\n"
+                        f"标题：{title}\n摘要前200字：{full_text[:200]}"
+                    ),
+                }
+            ],
+            temperature=0.0,
+            max_tokens=10,
+            timeout=15,
+        )
+        score_str = (score_response.choices[0].message.content or "").strip()
+        score_val = float(score_str)
+        if 0.0 <= score_val <= 1.0:
+            importance_score = round(score_val, 2)
+    except Exception:
+        pass  # scoring is optional
+
     return {
         "title": title,
         "summary_md": full_text,
         "tokens_used": tokens_used,
         "llm_model": config.model_name,
+        "importance_score": importance_score,
     }
 
 

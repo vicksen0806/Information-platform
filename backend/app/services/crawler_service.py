@@ -162,14 +162,38 @@ def _extract_basic(html: str) -> str:
 
 # ── Article fetcher ────────────────────────────────────────────────────────────
 
-def _fetch_article(url: str, session: requests.Session, referer: str = "") -> tuple[str, str] | None:
+def _fetch_article_js(url: str) -> tuple[str, str] | None:
+    """
+    Fetch a JS-rendered article via the Playwright microservice.
+    Returns (clean_text, url) or None on failure.
+    """
+    from app.config import settings
+    try:
+        resp = requests.post(
+            f"{settings.PLAYWRIGHT_URL}/render",
+            json={"url": url},
+            timeout=(5, 30),
+        )
+        if resp.status_code != 200:
+            return None
+        html = resp.json().get("html", "")
+        text = _extract_with_readability(html, url)
+        return (text, url) if len(text.strip()) > 150 else None
+    except Exception:
+        return None
+
+
+def _fetch_article(url: str, session: requests.Session, referer: str = "", use_js: bool = False) -> tuple[str, str] | None:
     """
     Fetch a single article and return (clean_text, resolved_url).
     resolved_url is the final URL after redirects (e.g. after Google News redirect).
     Returns None on any failure so callers can fall back to feed summary.
+    If use_js=True, delegates to the Playwright microservice.
     """
     if _should_skip(url):
         return None
+    if use_js:
+        return _fetch_article_js(url)
     try:
         domain = _domain_of(url)
         _rate_limit(domain)
@@ -254,15 +278,23 @@ def _fetch_webpage(url: str) -> tuple[str, int]:
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
-def fetch_url_sync(url: str, source_type: str) -> tuple[str | None, int | None, str | None]:
+def fetch_url_sync(url: str, source_type: str, requires_js: bool = False) -> tuple[str | None, int | None, str | None]:
     """
     Fetch and extract content from url.
     Returns (content, http_status, error_message).
     Runs synchronously — called from Celery worker thread.
+    If requires_js=True and source_type is webpage, delegates to Playwright microservice.
     """
     try:
         if source_type in ("rss", "search"):
             content, status = _extract_rss_content(url)
+        elif requires_js:
+            result = _fetch_article_js(url)
+            if result:
+                content, _ = result
+                status = 200
+            else:
+                content, status = None, None
         else:
             content, status = _fetch_webpage(url)
 

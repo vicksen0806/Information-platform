@@ -36,6 +36,18 @@ class Settings(BaseSettings):
     # 环境
     ENV: str = "development"
 
+    # Full-text search config: auto-set to 'jieba_cfg' at startup if pg_jieba is available
+    FTS_CONFIG: str = "simple"
+
+    # Playwright render service URL (set in docker-compose)
+    PLAYWRIGHT_URL: str = "http://playwright:3001"
+
+    # Web Push VAPID keys (generate with: python -c "from pywebpush import webpush; print(webpush.generate_keys())")
+    # Or: npx web-push generate-vapid-keys
+    VAPID_PRIVATE_KEY: str = ""
+    VAPID_PUBLIC_KEY: str = ""
+    VAPID_EMAIL: str = "mailto:admin@example.com"
+
     # LLM 提供商 base_url 映射
     LLM_PROVIDER_BASE_URLS: dict = {
         "openai":      "https://api.openai.com/v1",

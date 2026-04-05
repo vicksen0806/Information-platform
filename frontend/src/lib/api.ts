@@ -60,9 +60,9 @@ export const keywordsApi = {
     request<Keyword[]>(`/keywords${group !== undefined ? `?group=${encodeURIComponent(group)}` : ""}`),
   listGroups: () => request<string[]>("/keywords/groups"),
   articleStats: () => request<Record<string, { day: string; count: number }[]>>("/keywords/article-stats"),
-  create: (data: { text: string; url?: string; source_type?: string; group_name?: string; crawl_interval_hours?: number }) =>
+  create: (data: { text: string; url?: string; source_type?: string; group_name?: string; crawl_interval_hours?: number; requires_js?: boolean }) =>
     request<Keyword>("/keywords", { method: "POST", body: JSON.stringify(data) }),
-  update: (id: string, data: { is_active?: boolean; url?: string; source_type?: string; group_name?: string; crawl_interval_hours?: number }) =>
+  update: (id: string, data: { is_active?: boolean; url?: string; source_type?: string; group_name?: string; crawl_interval_hours?: number; requires_js?: boolean }) =>
     request<Keyword>(`/keywords/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   delete: (id: string) => request(`/keywords/${id}`, { method: "DELETE" }),
   export: () => request<KeywordExportItem[]>("/keywords/export"),
@@ -113,7 +113,7 @@ export const publicApi = {
 // ── Settings ──────────────────────────────────────────────────────────────────
 export const settingsApi = {
   getLlm: () => request<LlmConfig>("/settings/llm"),
-  upsertLlm: (data: { provider: string; api_key: string; model_name: string; base_url?: string; prompt_template?: string }) =>
+  upsertLlm: (data: { provider: string; api_key: string; model_name: string; base_url?: string; prompt_template?: string; summary_style?: string }) =>
     request<LlmConfig>("/settings/llm", { method: "PUT", body: JSON.stringify(data) }),
   deleteLlm: () => request("/settings/llm", { method: "DELETE" }),
   testLlm: () => request<{ success: boolean; message: string }>("/settings/llm/test", { method: "POST" }),
@@ -146,6 +146,39 @@ export const settingsApi = {
 // ── Stats ─────────────────────────────────────────────────────────────────────
 export const statsApi = {
   get: () => request<Stats>("/stats"),
+};
+
+// ── Push ──────────────────────────────────────────────────────────────────────
+export const pushApi = {
+  getVapidKey: () => request<{ vapid_public_key: string }>("/push/vapid-public-key"),
+  subscribe: (data: { endpoint: string; p256dh: string; auth: string }) =>
+    request("/push/subscribe", { method: "POST", body: JSON.stringify(data) }),
+  unsubscribeAll: () => request("/push/unsubscribe-all", { method: "DELETE" }),
+};
+
+// ── Export ────────────────────────────────────────────────────────────────────
+export const digestExportApi = {
+  toNotion: (digestId: string) =>
+    request<{ url: string }>(`/digests/${digestId}/export/notion`, { method: "POST" }),
+};
+
+export const notionSettingsApi = {
+  get: () => request<NotionConfig>("/settings/notion"),
+  upsert: (data: { notion_token?: string; database_id: string }) =>
+    request<NotionConfig>("/settings/notion", { method: "PUT", body: JSON.stringify(data) }),
+  delete: () => request("/settings/notion", { method: "DELETE" }),
+};
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
+export const adminApi = {
+  getUsers: (limit = 50, offset = 0) =>
+    request<User[]>(`/admin/users?limit=${limit}&offset=${offset}`),
+  updateUser: (id: string, is_active: boolean) =>
+    request<User>(`/admin/users/${id}?is_active=${is_active}`, { method: "PATCH" }),
+  getStats: () => request<AdminStats>("/admin/stats"),
+  triggerAll: () => request<{ message: string }>("/admin/crawl/trigger-all", { method: "POST" }),
+  getAuditLogs: (limit = 100, offset = 0) =>
+    request<AuditLog[]>(`/admin/audit-logs?limit=${limit}&offset=${offset}`),
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -186,6 +219,7 @@ export interface Keyword {
   group_name: string | null;
   crawl_interval_hours: number;
   last_crawled_at: string | null;
+  requires_js: boolean;
   created_at: string;
 }
 
@@ -222,6 +256,7 @@ export interface DigestListItem {
   created_at: string;
   feedback: "positive" | "negative" | null;
   is_starred: boolean;
+  importance_score: number | null;
 }
 
 export interface Digest extends DigestListItem {
@@ -239,6 +274,7 @@ export interface LlmConfig {
   model_name: string;
   base_url: string | null;
   prompt_template: string | null;
+  summary_style: "concise" | "detailed" | "academic";
 }
 
 export interface ScheduleConfig {
@@ -304,6 +340,29 @@ export interface NotificationRoute {
   webhook_type: string;
   webhook_url_masked: string;
   is_active: boolean;
+  created_at: string;
+}
+
+export interface NotionConfig {
+  notion_token_masked: string;
+  database_id: string;
+}
+
+export interface AdminStats {
+  total_users: number;
+  total_crawl_jobs: number;
+  total_digests: number;
+  total_tokens_used: number;
+}
+
+export interface AuditLog {
+  id: string;
+  actor_email: string | null;
+  action: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  detail: Record<string, unknown> | null;
+  ip_address: string | null;
   created_at: string;
 }
 

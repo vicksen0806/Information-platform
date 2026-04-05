@@ -11,6 +11,9 @@ from app.models.digest import Digest
 from app.models.digest_feedback import DigestFeedback
 from app.models.digest_star import DigestStar
 from app.models.notification_route import NotificationRoute
+from app.models.audit_log import AuditLog
+from app.models.user_notion_config import UserNotionConfig
+from app.models.push_subscription import PushSubscription
 
 __all__ = [
     "User",
@@ -26,4 +29,7 @@ __all__ = [
     "DigestFeedback",
     "DigestStar",
     "NotificationRoute",
+    "AuditLog",
+    "UserNotionConfig",
+    "PushSubscription",
 ]

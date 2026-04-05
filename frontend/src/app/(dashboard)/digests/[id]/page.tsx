@@ -4,7 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { digestsApi, type Digest } from "@/lib/api";
+import { digestsApi, digestExportApi, type Digest } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 
 export default function DigestDetailPage() {
@@ -18,6 +18,7 @@ export default function DigestDetailPage() {
   const [starring, setStarring] = useState(false);
   const [copyMsg, setCopyMsg] = useState("");
   const [copyMdMsg, setCopyMdMsg] = useState("");
+  const [notionMsg, setNotionMsg] = useState("");
 
   useEffect(() => {
     digestsApi.get(id).then(setDigest).finally(() => setLoading(false));
@@ -86,6 +87,30 @@ export default function DigestDetailPage() {
     });
   }
 
+  function handleExportObsidian() {
+    if (!digest?.summary_md) return;
+    const title = digest.title || `digest-${digest.id.slice(0, 8)}`;
+    const date = new Date(digest.created_at).toISOString().slice(0, 10);
+    const tags = (digest.keywords_used || []).join(", ");
+    const frontmatter = `---\ntags: [${tags}]\ncreated: ${date}\nsource: info-platform\n---\n\n`;
+    const content = frontmatter + digest.summary_md;
+    const uri = `obsidian://new?name=${encodeURIComponent(title)}&content=${encodeURIComponent(content)}`;
+    window.open(uri);
+  }
+
+  async function handleExportNotion() {
+    if (!digest) return;
+    setNotionMsg(t("digest_exporting"));
+    try {
+      await digestExportApi.toNotion(digest.id);
+      setNotionMsg(t("digest_export_ok"));
+      setTimeout(() => setNotionMsg(""), 3000);
+    } catch (err: any) {
+      setNotionMsg(err.message || t("digest_export_err"));
+      setTimeout(() => setNotionMsg(""), 4000);
+    }
+  }
+
   function handleDownloadMarkdown() {
     if (!digest?.summary_md) return;
     const filename = `digest-${new Date(digest.created_at).toISOString().slice(0, 10)}.md`;
@@ -131,6 +156,12 @@ export default function DigestDetailPage() {
               </button>
               <button onClick={handleDownloadMarkdown} className="px-3 py-1.5 text-xs border border-border rounded hover:bg-muted">
                 {t("digest_download_md")}
+              </button>
+              <button onClick={handleExportObsidian} className="px-3 py-1.5 text-xs border border-border rounded hover:bg-muted" title="Requires Obsidian app installed">
+                {t("digest_export_obsidian")}
+              </button>
+              <button onClick={handleExportNotion} disabled={!!notionMsg} className="px-3 py-1.5 text-xs border border-border rounded hover:bg-muted disabled:opacity-60">
+                {notionMsg || t("digest_export_notion")}
               </button>
             </>
           )}

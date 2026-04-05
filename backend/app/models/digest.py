@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Integer, Boolean, DateTime, ForeignKey, Text, func
+from sqlalchemy import String, Integer, Boolean, DateTime, ForeignKey, Text, Float, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from app.database import Base
@@ -20,6 +20,7 @@ class Digest(Base):
     llm_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     share_token: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    importance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     user: Mapped["User"] = relationship("User", back_populates="digests")

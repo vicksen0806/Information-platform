@@ -175,6 +175,7 @@ async def create_keyword(
         source_type=data.source_type if data.url else "search",
         group_name=data.group_name or None,
         crawl_interval_hours=data.crawl_interval_hours,
+        requires_js=data.requires_js,
     )
     db.add(keyword)
     try:
@@ -202,6 +203,8 @@ async def update_keyword(
         keyword.group_name = data.group_name if data.group_name.strip() else None
     if data.crawl_interval_hours is not None:
         keyword.crawl_interval_hours = data.crawl_interval_hours
+    if data.requires_js is not None:
+        keyword.requires_js = data.requires_js
     await db.flush()
     await db.refresh(keyword)
     return keyword

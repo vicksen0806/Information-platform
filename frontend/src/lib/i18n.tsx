@@ -26,6 +26,30 @@ export const translations = {
   nav_keywords: { zh: "关键词", en: "Keywords" },
   nav_settings: { zh: "设置", en: "Settings" },
   nav_signout: { zh: "退出登录", en: "Sign out" },
+  nav_admin: { zh: "管理后台", en: "Admin" },
+
+  // Admin page
+  admin_title: { zh: "管理后台", en: "Admin Panel" },
+  admin_stats_users: { zh: "总用户数", en: "Total users" },
+  admin_stats_jobs: { zh: "总抓取次数", en: "Total crawl jobs" },
+  admin_stats_digests: { zh: "总摘要数", en: "Total digests" },
+  admin_stats_tokens: { zh: "总 Token 用量", en: "Total tokens" },
+  admin_users_title: { zh: "用户管理", en: "User Management" },
+  admin_trigger_all: { zh: "触发全局抓取", en: "Trigger all crawls" },
+  admin_triggering: { zh: "触发中…", en: "Triggering..." },
+  admin_triggered: { zh: "已触发！", en: "Triggered!" },
+  admin_col_email: { zh: "邮箱", en: "Email" },
+  admin_col_name: { zh: "昵称", en: "Name" },
+  admin_col_role: { zh: "角色", en: "Role" },
+  admin_col_status: { zh: "状态", en: "Status" },
+  admin_col_registered: { zh: "注册时间", en: "Registered" },
+  admin_col_action: { zh: "操作", en: "Action" },
+  admin_role_admin: { zh: "管理员", en: "Admin" },
+  admin_role_user: { zh: "普通用户", en: "User" },
+  admin_enable_user: { zh: "启用", en: "Enable" },
+  admin_disable_user: { zh: "禁用", en: "Disable" },
+  admin_load_more: { zh: "加载更多", en: "Load more" },
+  admin_no_access: { zh: "无访问权限", en: "Access denied" },
 
   // Dashboard page
   dash_title: { zh: "抓取任务", en: "Crawl Jobs" },
@@ -98,6 +122,8 @@ export const translations = {
   kw_last_crawled: { zh: "· 最近抓取于 {t}", en: "· Last crawled {t}" },
   kw_empty: { zh: "暂无关键词 — 添加你想关注的话题", en: "No keywords yet — add topics you want to follow" },
   kw_delete_confirm: { zh: "删除这个关键词？", en: "Delete this keyword?" },
+  kw_requires_js: { zh: "启用 JS 渲染（Playwright）", en: "Enable JS rendering (Playwright)" },
+  kw_requires_js_hint: { zh: "对单页应用或登录墙页面使用，会更慢", en: "For SPAs or paywalled pages — slower" },
   kw_interval_1: { zh: "每小时", en: "Every hour" },
   kw_interval_6: { zh: "每 6 小时", en: "Every 6 hours" },
   kw_interval_12: { zh: "每 12 小时", en: "Every 12 hours" },
@@ -183,6 +209,13 @@ export const translations = {
   kw_article_trend: { zh: "近30天文章数", en: "Articles (30d)" },
   kw_no_data: { zh: "暂无数据", en: "No data" },
 
+  // Settings – summary style
+  settings_style_title: { zh: "摘要风格", en: "Summary Style" },
+  settings_style_sub: { zh: "选择 LLM 生成摘要的表达方式（自定义 Prompt 时此设置不生效）", en: "Style for AI-generated summaries (ignored when custom prompt is set)" },
+  settings_style_concise: { zh: "简洁 — 每点一句话", en: "Concise — one sentence per point" },
+  settings_style_detailed: { zh: "详细 — 含背景与影响分析", en: "Detailed — includes context and impact" },
+  settings_style_academic: { zh: "学术 — 正式语气，引用数据", en: "Academic — formal tone with data citations" },
+
   // Settings – prompt template
   settings_prompt_title: { zh: "自定义 Prompt", en: "Custom Prompt" },
   settings_prompt_sub: { zh: "替换默认系统提示词，留空则使用内置模板", en: "Override the default system prompt. Leave blank to use the built-in template." },
@@ -245,6 +278,35 @@ export const translations = {
   settings_routes_group: { zh: "分组名（留空=未分组）", en: "Group name (blank = ungrouped)" },
   settings_routes_empty: { zh: "暂无路由配置", en: "No routes configured" },
   settings_routes_delete_confirm: { zh: "删除这条路由？", en: "Delete this route?" },
+
+  // Web Push
+  settings_push_title: { zh: "移动端推送（Web Push）", en: "Web Push Notifications" },
+  settings_push_sub: { zh: "在此设备上接收浏览器推送通知（需要 HTTPS）", en: "Receive push notifications on this device (requires HTTPS)" },
+  settings_push_enable: { zh: "启用推送通知", en: "Enable push notifications" },
+  settings_push_disable: { zh: "关闭推送通知", en: "Disable push notifications" },
+  settings_push_enabling: { zh: "启用中…", en: "Enabling..." },
+  settings_push_enabled: { zh: "推送已启用", en: "Push enabled" },
+  settings_push_denied: { zh: "通知权限被拒绝，请在浏览器设置中允许", en: "Permission denied — allow notifications in browser settings" },
+  settings_push_unsupported: { zh: "此浏览器不支持推送通知", en: "Push notifications not supported in this browser" },
+  settings_push_not_configured: { zh: "服务器未配置 VAPID 密钥，暂不支持 Web Push", en: "Server VAPID keys not configured — Web Push unavailable" },
+
+  // Export
+  digest_export_obsidian: { zh: "导出到 Obsidian", en: "Open in Obsidian" },
+  digest_export_notion: { zh: "导出到 Notion", en: "Export to Notion" },
+  digest_exporting: { zh: "导出中…", en: "Exporting..." },
+  digest_export_ok: { zh: "已导出！", en: "Exported!" },
+  digest_export_err: { zh: "导出失败", en: "Export failed" },
+
+  // Settings – Notion
+  settings_notion_title: { zh: "Notion 集成", en: "Notion Integration" },
+  settings_notion_sub: { zh: "将摘要导出到 Notion 数据库", en: "Export digests to a Notion database" },
+  settings_notion_token: { zh: "Integration Token", en: "Integration Token" },
+  settings_notion_token_keep: { zh: "留空保持现有 Token", en: "Leave blank to keep existing token" },
+  settings_notion_db: { zh: "Database ID", en: "Database ID" },
+  settings_notion_save: { zh: "保存 Notion 配置", en: "Save Notion config" },
+  settings_notion_remove: { zh: "移除", en: "Remove" },
+  settings_notion_remove_confirm: { zh: "移除 Notion 配置？", en: "Remove Notion config?" },
+  settings_notion_current: { zh: "当前数据库：{db}", en: "Current database: {db}" },
 
   // Auth pages
   auth_login_title: { zh: "登录", en: "Sign in" },

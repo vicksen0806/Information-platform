@@ -37,8 +37,11 @@ async def list_digests(
 
     if q and q.strip():
         term = q.strip()
-        fts = func.to_tsvector("simple", func.coalesce(Digest.title, "") + " " + func.coalesce(Digest.summary_md, ""))
-        tsq = func.plainto_tsquery("simple", term)
+        # Use jieba_cfg if pg_jieba is installed, otherwise fall back to simple
+        from app.config import settings as _s
+        ts_config = getattr(_s, "FTS_CONFIG", "simple")
+        fts = func.to_tsvector(ts_config, func.coalesce(Digest.title, "") + " " + func.coalesce(Digest.summary_md, ""))
+        tsq = func.plainto_tsquery(ts_config, term)
         stmt = stmt.where(
             or_(
                 fts.op("@@")(tsq),

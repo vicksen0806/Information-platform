@@ -1,0 +1,10 @@
+FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir fastapi uvicorn[standard] playwright
+
+# Browsers are pre-installed in the base image
+COPY playwright/main.py /app/main.py
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3001"]

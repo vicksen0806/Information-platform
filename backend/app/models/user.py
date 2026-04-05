@@ -23,6 +23,7 @@ class User(Base):
     schedule_config: Mapped["UserScheduleConfig"] = relationship("UserScheduleConfig", back_populates="user", uselist=False)
     notification_config: Mapped["UserNotificationConfig"] = relationship("UserNotificationConfig", back_populates="user", uselist=False)
     email_config: Mapped["UserEmailConfig"] = relationship("UserEmailConfig", back_populates="user", uselist=False)
+    notion_config: Mapped["UserNotionConfig"] = relationship("UserNotionConfig", back_populates="user", uselist=False)
     notification_routes: Mapped[list["NotificationRoute"]] = relationship("NotificationRoute", back_populates="user", cascade="all, delete-orphan")
     sources: Mapped[list["Source"]] = relationship("Source", back_populates="user", cascade="all, delete-orphan")
     keywords: Mapped[list["Keyword"]] = relationship("Keyword", back_populates="user", cascade="all, delete-orphan")

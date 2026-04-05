@@ -39,6 +39,7 @@ async def get_llm_config(
         model_name=config.model_name,
         base_url=config.base_url,
         prompt_template=config.prompt_template,
+        summary_style=getattr(config, "summary_style", "concise") or "concise",
     )
 
 
@@ -58,6 +59,7 @@ async def upsert_llm_config(
         config.model_name = data.model_name
         config.base_url = base_url
         config.prompt_template = data.prompt_template or None
+        config.summary_style = data.summary_style
     else:
         if not data.api_key:
             raise HTTPException(status_code=400, detail="API Key required for first-time setup")
@@ -68,6 +70,7 @@ async def upsert_llm_config(
             model_name=data.model_name,
             base_url=base_url,
             prompt_template=data.prompt_template or None,
+            summary_style=data.summary_style,
         )
         db.add(config)
     await db.flush()
@@ -78,6 +81,7 @@ async def upsert_llm_config(
         model_name=config.model_name,
         base_url=config.base_url,
         prompt_template=config.prompt_template,
+        summary_style=config.summary_style or "concise",
     )
 
 

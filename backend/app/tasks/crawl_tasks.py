@@ -177,7 +177,9 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
                 crawl_url = f"https://news.google.com/rss/search?q={query}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
                 crawl_type = "rss"
 
-            content, http_status, error = fetch_url_sync(crawl_url, crawl_type)
+            content, http_status, error = fetch_url_sync(
+                crawl_url, crawl_type, requires_js=getattr(kw, "requires_js", False)
+            )
 
             # Update last_crawled_at regardless of success/failure
             kw.last_crawled_at = datetime.now(timezone.utc)

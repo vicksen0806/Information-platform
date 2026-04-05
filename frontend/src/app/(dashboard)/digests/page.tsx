@@ -247,6 +247,15 @@ function DigestsContent() {
                         </p>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {new Date(digest.created_at).toLocaleString()} · {t("digests_sources", { n: digest.sources_count })}
+                          {digest.importance_score != null && (
+                            <span className={`ml-2 px-1.5 py-0.5 rounded text-xs font-medium ${
+                              digest.importance_score >= 0.7 ? "bg-red-100 text-red-600" :
+                              digest.importance_score >= 0.4 ? "bg-yellow-100 text-yellow-700" :
+                              "bg-muted text-muted-foreground"
+                            }`}>
+                              {digest.importance_score >= 0.7 ? "🔥" : digest.importance_score >= 0.4 ? "⚡" : "○"} {Math.round(digest.importance_score * 100)}
+                            </span>
+                          )}
                         </p>
                       </div>
                     </div>

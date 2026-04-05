@@ -7,16 +7,28 @@
 ## 技术栈
 | 层 | 技术 |
 |---|---|
-| 前端 | Next.js 14 (App Router) + Tailwind CSS + @tailwindcss/typography |
+| 前端 | Next.js 14 (App Router) + Tailwind CSS + @tailwindcss/typography + PWA (manifest + sw.js) |
 | 后端 | FastAPI (Python) + slowapi 限速 |
-| 数据库 | PostgreSQL + pg_trgm |
+| 数据库 | PostgreSQL + pg_trgm + pg_jieba（中文分词，可选） |
 | 任务队列 | Celery + Redis |
-| 爬虫 | requests + BeautifulSoup + readability-lxml + feedparser |
+| 爬虫 | requests + BeautifulSoup + readability-lxml + feedparser + Playwright（JS渲染，独立服务） |
 | LLM | openai SDK（base_url 切换，兼容火山方舟/DeepSeek/Qwen/ZhipuAI/Moonshot/OpenAI） |
 | 部署 | 腾讯云 CVM + Docker Compose + Nginx |
 
 ## 当前进度（2026-04-04）
-**Phase 2 + Phase 2.5 + Phase 3 功能全部完成**，已端对端验证。
+**Phase 2 + Phase 2.5 + Phase 3 + Phase 4 功能全部完成**。
+
+**Phase 4 新增功能（功能扩展 + 技术优化）：**
+- 管理后台 `/admin`：用户列表、启用/禁用账户、全局统计卡片、触发全局抓取、审计日志（`audit_logs` 表，管理员操作记录）
+- 个性化摘要风格：设置页 LLM 配置区增加 简洁/详细/学术 三选一（`user_llm_configs.summary_style`），影响 default system prompt 的风格指令
+- 反馈驱动 Prompt 优化：每次生成摘要前查最近30条 `digest_feedbacks`，正面 ≥70% 或负面 ≥60% 时自动注入偏好提示到 `user_prompt`
+- 周报/月报定时推送：`report_tasks.py` 中 `send_weekly_report`（每周一9:00 UTC）和 `send_monthly_report`（每月1日）Beat 任务，发送摘要汇总到 Email/Webhook
+- 重要度评分：每次 LLM 摘要生成后追加一次轻量打分调用（0-1分），结果存 `digests.importance_score`；评分 <0.4 时不触发推送；列表页显示 🔥/⚡/○ 图标
+- pg_jieba 中文搜索：自定义 `docker/Dockerfile.postgres`（debian 基础），编译安装 pg_jieba，startup 自动注册扩展和索引；`config.FTS_CONFIG` 自动切换 jieba_cfg/simple；alpine 不兼容时优雅降级
+- Playwright JS 渲染爬虫：独立 `playwright` Docker 服务（`docker/playwright/main.py` + `docker/Dockerfile.playwright`），暴露 `POST /render`；关键词新增 `requires_js` 字段，爬虫 worker 通过 HTTP 调用 Playwright 服务
+- Obsidian 导出：摘要详情页一键生成 `obsidian://new?...` URI，自动带 frontmatter（tags/created/source）
+- Notion 导出：新 `user_notion_configs` 表（AES-GCM 加密 token）；`POST /digests/{id}/export/notion` 调用 Notion API 创建页面；设置页配置 Integration Token + Database ID
+- PWA + Web Push：`public/manifest.json` + `public/sw.js`（静态 service worker，处理 push 事件）；后端 `push_subscriptions` 表 + `/push` 路由（subscribe/unsubscribe）；`pywebpush` 在摘要生成后发送 Web Push；设置页一键启用/禁用；VAPID 密钥通过 `VAPID_PRIVATE_KEY`/`VAPID_PUBLIC_KEY` 环境变量配置
 
 **Phase 2 核心功能：**
 - 关键词管理（分组/标签、每关键词独立抓取频率）→ 触发抓取（全文提取 + 溯源链接）→ LLM 按关键词分组生成摘要 → 前端实时显示状态 → Webhook 推送通知
@@ -96,6 +108,16 @@ cd frontend && npm run dev    # 前端开发服务器，运行在 http://localho
 - 分组 Webhook 路由：`notification_routes` 表按 `group_name` 匹配，在 `digest_tasks.py` 的 `generate_digest` 末尾分发；全局 webhook 仍发完整摘要
 - Webhook 重试：`_send_with_retry(send_fn, config, keywords, summary, created_at, max_attempts=3)`，第1次重试等30s，第2次等60s
 - 失败告警：`_check_and_alert_failures` 在每次 crawl job 结束后调用，过滤掉 "Content unchanged" 和 "All articles duplicated" 的伪错误
+- **Phase 4 新增决策：**
+- 审计日志：管理员操作（禁用/启用用户、触发全局抓取）写入 `audit_logs` 表，记录 actor_email、action、resource_id、IP；`GET /admin/audit-logs` 必须定义在 `PATCH /admin/users/{id}` 之前（FastAPI 路由冲突规则）
+- 摘要风格：`summary_style` 存 `user_llm_configs`，取值 `concise/detailed/academic`，在 `llm_service.py` 转换为风格指令字符串注入 system prompt；不影响 prompt_template（自定义 prompt 时风格指令仍追加）
+- 反馈驱动 Prompt：`digest_tasks.py` 生成摘要前读近30条 `DigestFeedback`，样本 ≥5 才触发；正面 ≥70% 注入"继续保持"提示，负面 ≥60% 注入"调整减少冗余"提示；feedback_hint 以参数形式传入 `generate_digest_sync`
+- 重要度评分：主摘要生成后追加独立 LLM 调用（`max_tokens=10`），prompt 要求返回 0.0-1.0 单个数字；结果存 `digests.importance_score`；`IMPORTANCE_THRESHOLD = 0.4`，低于此值跳过 webhook/email/push 通知
+- pg_jieba 降级：`settings.FTS_CONFIG` 初始为 `"simple"`，startup 尝试 `CREATE EXTENSION IF NOT EXISTS pg_jieba` 成功后设为 `"jieba_cfg"`；搜索查询使用 `settings.FTS_CONFIG` 变量，pg_jieba 不可用时自动降级到 trgm 搜索
+- Playwright 微服务：独立 Docker 容器（`playwright:3001`），FastAPI 暴露 `POST /render`，Celery worker 通过 HTTP 调用；不在 worker 容器内安装 Chromium（内存占用大）；`requires_js=True` 的关键词抓取时路由到该服务
+- Notion token 加密：复用 `security.py` 中的 `encrypt_api_key / decrypt_api_key`（AES-256-GCM），存 `user_notion_configs.notion_token_enc`；Notion markdown 转换：内容按 ≤1900 字符分块，每块以 `code` block（language=markdown）格式写入 Notion page
+- VAPID 密钥：通过环境变量 `VAPID_PRIVATE_KEY`、`VAPID_PUBLIC_KEY`、`VAPID_EMAIL` 注入；`/push/vapid-public-key` 在未配置时返回 503；dead endpoint（410/404）在发送后自动从 `push_subscriptions` 清理
+- 周报/月报：`report_tasks.py` 中两个 Beat 任务（`crontab`），直接查询 `digests` 表按时间区间聚合；通过 `send_email_notification` 和 `send_digest_notification` 发出，复用现有 notification_service；不依赖 Celery 链式任务
 
 ## 数据库变更记录（未走 Alembic，生产部署前需补写迁移）
 ```sql
@@ -195,41 +217,57 @@ CREATE INDEX idx_digests_summary_trgm ON digests USING GIN (summary_md gin_trgm_
 ```
 backend/app/
 ├── models/
-│   ├── user.py                      # 含 email_config / notification_routes relationship
-│   ├── user_llm_config.py           # 含 prompt_template
+│   ├── user.py                      # 含 email_config / notion_config / notification_routes relationship
+│   ├── user_llm_config.py           # 含 prompt_template / summary_style
 │   ├── user_schedule_config.py
 │   ├── user_notification_config.py
 │   ├── user_email_config.py         # SMTP 配置（Phase 3）
-│   ├── keyword.py                   # 含 group_name / crawl_interval_hours / last_crawled_at
+│   ├── user_notion_config.py        # Notion 集成（Phase 4）
+│   ├── keyword.py                   # 含 group_name / crawl_interval_hours / last_crawled_at / requires_js
 │   ├── crawl_job.py                 # 含 new_content_found / digest_error
 │   ├── crawl_result.py              # 含 keyword_text（source_id nullable）
-│   ├── digest.py                    # 含 share_token
+│   ├── digest.py                    # 含 share_token / importance_score
 │   ├── digest_feedback.py           # 👍/👎（Phase 3）
 │   ├── digest_star.py               # 收藏（Phase 3）
-│   └── notification_route.py        # 分组路由（Phase 3）
+│   ├── notification_route.py        # 分组路由（Phase 3）
+│   ├── audit_log.py                 # 管理员审计日志（Phase 4）
+│   └── push_subscription.py        # Web Push 订阅（Phase 4）
 ├── routers/
 │   ├── auth.py                      # 含 slowapi 限速（登录10/min，注册5/min）
 │   ├── keywords.py                  # GET /export / POST /import / GET /groups / GET /article-stats
 │   ├── crawl_jobs.py                # 含 POST /{id}/retry / GET /{id}/results
 │   ├── digests.py                   # POST /mark-all-read / GET /usage / POST|DELETE /{id}/star|share|feedback
 │   ├── public.py                    # GET /public/digests/{token} / GET /public/feed/{token}.rss
-│   ├── settings.py                  # /llm / /schedule / /notification / /email / /feed-token / /notification-routes
+│   ├── settings.py                  # /llm（含 summary_style）/ /schedule / /notification / /email / /feed-token / /notification-routes / /notion
+│   ├── admin.py                     # GET /users / PATCH /users/{id} / GET /stats / POST /crawl/trigger-all / GET /audit-logs
+│   ├── export.py                    # POST /digests/{id}/export/notion / GET|PUT|DELETE /settings/notion
+│   ├── push.py                      # GET /push/vapid-public-key / POST /push/subscribe / DELETE /push/unsubscribe-all
 │   └── stats.py                     # GET /stats（Dashboard 统计卡片）
 ├── services/
-│   ├── crawler_service.py           # readability + UA 轮换 + 重试 + 速率限制 + Source URL 注入 + resolved_url
-│   ├── llm_service.py               # 分组感知 prompt（has_groups）+ 来源链接 + 自定义 prompt_template
+│   ├── crawler_service.py           # readability + UA 轮换 + 重试 + 速率限制 + Source URL 注入 + _fetch_article_js(Playwright)
+│   ├── llm_service.py               # 分组感知 + summary_style 风格指令 + feedback_hint 参数 + importance_score 打分
 │   └── notification_service.py      # Feishu / WeCom / Generic + SMTP email
 ├── tasks/
-│   ├── celery_app.py                # Beat 每30分钟
-│   ├── crawl_tasks.py               # crawl_interval_hours + 活跃度自动调整 + _check_and_alert_failures
-│   └── digest_tasks.py              # LLM 生成 + 401 处理 + _send_with_retry + 分组路由分发
+│   ├── celery_app.py                # Beat 每30分钟 + 周报（周一9:00）+ 月报（每月1日9:00）
+│   ├── crawl_tasks.py               # crawl_interval_hours + 活跃度自动调整 + _check_and_alert_failures + requires_js
+│   ├── digest_tasks.py              # LLM 生成 + feedback_hint + importance_score + Web Push + _send_with_retry + 分组路由
+│   └── report_tasks.py              # 周报/月报聚合 + Email/Webhook 发送
 └── schemas/
-    ├── keyword.py                   # 含 group_name / crawl_interval_hours / last_crawled_at
-    ├── digest.py                    # 含 share_token / is_starred / UsageResponse
-    ├── llm_config.py                # 含 prompt_template
+    ├── keyword.py                   # 含 group_name / crawl_interval_hours / last_crawled_at / requires_js
+    ├── digest.py                    # 含 share_token / is_starred / importance_score / UsageResponse
+    ├── llm_config.py                # 含 prompt_template / summary_style
     ├── schedule.py
     ├── notification.py              # 含 NotificationRouteCreate / NotificationRouteResponse
     └── email_config.py
+
+docker/
+├── Dockerfile.backend
+├── Dockerfile.worker
+├── Dockerfile.frontend
+├── Dockerfile.postgres              # 自定义 postgres:16（debian），编译安装 pg_jieba
+├── Dockerfile.playwright            # mcr.microsoft.com/playwright/python，暴露 :3001
+├── playwright/main.py               # FastAPI render service（POST /render）
+└── entrypoint.sh
 
 frontend/src/app/
 ├── (auth)/

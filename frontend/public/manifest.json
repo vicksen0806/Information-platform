@@ -1,0 +1,16 @@
+{
+  "name": "Info Platform",
+  "short_name": "InfoPlatform",
+  "description": "Multi-keyword information aggregation with AI digests",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "any",
+      "type": "image/x-icon"
+    }
+  ]
+}

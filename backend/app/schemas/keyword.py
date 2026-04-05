@@ -9,6 +9,7 @@ class KeywordCreate(BaseModel):
     source_type: str = "search"  # search | webpage | rss
     group_name: str | None = None
     crawl_interval_hours: int = 24
+    requires_js: bool = False
 
     @field_validator("text")
     @classmethod
@@ -34,6 +35,7 @@ class KeywordUpdate(BaseModel):
     source_type: str | None = None
     group_name: str | None = None
     crawl_interval_hours: int | None = None
+    requires_js: bool | None = None
 
 
 class KeywordResponse(BaseModel):
@@ -45,6 +47,7 @@ class KeywordResponse(BaseModel):
     group_name: str | None
     crawl_interval_hours: int
     last_crawled_at: datetime | None
+    requires_js: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}

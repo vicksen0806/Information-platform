@@ -1,0 +1,19 @@
+FROM postgres:16
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    cmake \
+    build-essential \
+    postgresql-server-dev-16 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build and install pg_jieba (includes cppjieba dict as submodule)
+RUN git clone --depth=1 --recurse-submodules \
+    https://github.com/jaiminpan/pg_jieba.git /tmp/pg_jieba \
+    && cd /tmp/pg_jieba \
+    && mkdir build && cd build \
+    && cmake .. \
+    && make \
+    && make install \
+    && rm -rf /tmp/pg_jieba

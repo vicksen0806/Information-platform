@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-import { settingsApi, digestsApi, authApi, type LlmConfig, type User, type ScheduleConfig, type NotificationConfig, type UsageStats, type EmailConfig, type NextCrawlInfo, type FeedTokenInfo, type NotificationRoute } from "@/lib/api";
+import { settingsApi, digestsApi, authApi, notionSettingsApi, pushApi, type LlmConfig, type User, type ScheduleConfig, type NotificationConfig, type UsageStats, type EmailConfig, type NextCrawlInfo, type FeedTokenInfo, type NotificationRoute, type NotionConfig } from "@/lib/api";
 import { useLang, useT } from "@/lib/i18n";
 
 const PROVIDERS = [
@@ -42,6 +42,7 @@ export default function SettingsPage() {
   const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
   const [llmForm, setLlmForm] = useState({ provider: "volcengine", api_key: "", model_name: "ep-m-20260322064927-gvkkg", base_url: "" });
   const [promptTemplate, setPromptTemplate] = useState("");
+  const [summaryStyle, setSummaryStyle] = useState<"concise" | "detailed" | "academic">("concise");
   const [llmError, setLlmError] = useState("");
   const [llmSuccess, setLlmSuccess] = useState("");
   const [savingLlm, setSavingLlm] = useState(false);
@@ -74,6 +75,14 @@ export default function SettingsPage() {
   const [feedToken, setFeedToken] = useState<FeedTokenInfo | null>(null);
   const [feedCopyMsg, setFeedCopyMsg] = useState("");
 
+  const [pushStatus, setPushStatus] = useState<"idle" | "enabling" | "enabled" | "denied" | "unsupported" | "not_configured">("idle");
+
+  const [notionConfig, setNotionConfig] = useState<NotionConfig | null>(null);
+  const [notionForm, setNotionForm] = useState({ notion_token: "", database_id: "" });
+  const [notionError, setNotionError] = useState("");
+  const [notionSuccess, setNotionSuccess] = useState("");
+  const [savingNotion, setSavingNotion] = useState(false);
+
   const [notifRoutes, setNotifRoutes] = useState<NotificationRoute[]>([]);
   const [newRoute, setNewRoute] = useState({ group_name: "", webhook_type: "feishu", webhook_url: "", is_active: true });
   const [savingRoute, setSavingRoute] = useState(false);
@@ -85,6 +94,7 @@ export default function SettingsPage() {
       setLlmConfig(config);
       setLlmForm((prev) => ({ ...prev, provider: config.provider, model_name: config.model_name, base_url: config.base_url || "" }));
       setPromptTemplate(config.prompt_template || "");
+      setSummaryStyle((config.summary_style as "concise" | "detailed" | "academic") || "concise");
     }).catch(() => {});
     settingsApi.getSchedule().then(setScheduleForm).catch(() => {});
     settingsApi.getNotification().then((c) => {
@@ -98,6 +108,10 @@ export default function SettingsPage() {
     settingsApi.getNextCrawl().then(setNextCrawl).catch(() => {});
     settingsApi.getFeedToken().then(setFeedToken).catch(() => {});
     settingsApi.getNotificationRoutes().then(setNotifRoutes).catch(() => {});
+    notionSettingsApi.get().then((c) => {
+      setNotionConfig(c);
+      setNotionForm((prev) => ({ ...prev, database_id: c.database_id }));
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -115,9 +129,10 @@ export default function SettingsPage() {
     e.preventDefault();
     setLlmError(""); setLlmSuccess(""); setSavingLlm(true);
     try {
-      const config = await settingsApi.upsertLlm({ provider: llmForm.provider, api_key: llmForm.api_key, model_name: llmForm.model_name, base_url: llmForm.base_url || undefined, prompt_template: promptTemplate.trim() || undefined });
+      const config = await settingsApi.upsertLlm({ provider: llmForm.provider, api_key: llmForm.api_key, model_name: llmForm.model_name, base_url: llmForm.base_url || undefined, prompt_template: promptTemplate.trim() || undefined, summary_style: summaryStyle });
       setLlmConfig(config);
       setPromptTemplate(config.prompt_template || "");
+      setSummaryStyle((config.summary_style as "concise" | "detailed" | "academic") || "concise");
       setLlmSuccess(t("settings_saved"));
     } catch (err: any) { setLlmError(err.message); }
     finally { setSavingLlm(false); }
@@ -299,6 +314,25 @@ export default function SettingsPage() {
           <div>
             <label className="block text-sm font-medium mb-1">{t("settings_base_url")}</label>
             <input value={llmForm.base_url} onChange={(e) => setLlmForm({ ...llmForm, base_url: e.target.value })} className="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring" placeholder="https://api.example.com/v1" />
+          </div>
+          <div>
+            <label className="text-sm font-medium block mb-1">{t("settings_style_title")}</label>
+            <p className="text-xs text-muted-foreground mb-2">{t("settings_style_sub")}</p>
+            <div className="flex flex-col gap-1.5">
+              {(["concise", "detailed", "academic"] as const).map((style) => (
+                <label key={style} className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="summaryStyle"
+                    value={style}
+                    checked={summaryStyle === style}
+                    onChange={() => setSummaryStyle(style)}
+                    className="accent-primary"
+                  />
+                  <span className="text-sm">{t(`settings_style_${style}` as any)}</span>
+                </label>
+              ))}
+            </div>
           </div>
           <div>
             <div className="flex items-center justify-between mb-1">
@@ -509,6 +543,143 @@ export default function SettingsPage() {
             {emailTestResult.success ? "✓ " : "✗ "}{emailTestResult.message}
           </div>
         )}
+      </section>
+
+      {/* ── Notion ── */}
+      <section className="bg-background border border-border rounded-lg p-5">
+        <h2 className="font-semibold mb-1">{t("settings_notion_title")}</h2>
+        <p className="text-sm text-muted-foreground mb-4">{t("settings_notion_sub")}</p>
+        {notionError && <div className="mb-3 px-3 py-2 text-sm text-destructive bg-destructive/10 rounded">{notionError}</div>}
+        {notionSuccess && <div className="mb-3 px-3 py-2 text-sm text-green-700 bg-green-50 rounded">{notionSuccess}</div>}
+        {notionConfig && (
+          <p className="text-xs text-muted-foreground mb-3">
+            {t("settings_notion_current", { db: notionConfig.database_id })} · {notionConfig.notion_token_masked}
+          </p>
+        )}
+        <form onSubmit={async (e) => {
+          e.preventDefault();
+          setNotionError(""); setNotionSuccess(""); setSavingNotion(true);
+          try {
+            const c = await notionSettingsApi.upsert({ notion_token: notionForm.notion_token || undefined, database_id: notionForm.database_id });
+            setNotionConfig(c);
+            setNotionForm((prev) => ({ ...prev, notion_token: "" }));
+            setNotionSuccess(t("settings_saved"));
+          } catch (err: any) { setNotionError(err.message); }
+          finally { setSavingNotion(false); }
+        }} className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium mb-1">{t("settings_notion_token")}</label>
+            <input
+              type="password"
+              value={notionForm.notion_token}
+              onChange={(e) => setNotionForm({ ...notionForm, notion_token: e.target.value })}
+              className="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              placeholder={notionConfig ? t("settings_notion_token_keep") : "secret_..."}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">{t("settings_notion_db")}</label>
+            <input
+              required
+              value={notionForm.database_id}
+              onChange={(e) => setNotionForm({ ...notionForm, database_id: e.target.value })}
+              className="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+            />
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button type="submit" disabled={savingNotion} className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 disabled:opacity-50">
+              {savingNotion ? t("saving") : t("settings_notion_save")}
+            </button>
+            {notionConfig && (
+              <button type="button" onClick={async () => {
+                if (!confirm(t("settings_notion_remove_confirm"))) return;
+                await notionSettingsApi.delete();
+                setNotionConfig(null);
+                setNotionForm({ notion_token: "", database_id: "" });
+              }} className="px-4 py-2 text-sm border border-destructive/30 text-destructive rounded-md hover:bg-destructive/5">
+                {t("settings_notion_remove")}
+              </button>
+            )}
+          </div>
+        </form>
+      </section>
+
+      {/* ── Web Push ── */}
+      <section className="bg-background border border-border rounded-lg p-5">
+        <h2 className="font-semibold mb-1">{t("settings_push_title")}</h2>
+        <p className="text-sm text-muted-foreground mb-4">{t("settings_push_sub")}</p>
+        {pushStatus === "enabled" && (
+          <p className="text-sm text-green-700 mb-3">{t("settings_push_enabled")}</p>
+        )}
+        {pushStatus === "denied" && (
+          <p className="text-sm text-destructive mb-3">{t("settings_push_denied")}</p>
+        )}
+        {pushStatus === "unsupported" && (
+          <p className="text-sm text-muted-foreground mb-3">{t("settings_push_unsupported")}</p>
+        )}
+        {pushStatus === "not_configured" && (
+          <p className="text-sm text-muted-foreground mb-3">{t("settings_push_not_configured")}</p>
+        )}
+        <div className="flex gap-2">
+          <button
+            onClick={async () => {
+              if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+                setPushStatus("unsupported"); return;
+              }
+              setPushStatus("enabling");
+              try {
+                const { vapid_public_key } = await pushApi.getVapidKey();
+                const perm = await Notification.requestPermission();
+                if (perm !== "granted") { setPushStatus("denied"); return; }
+
+                const reg = await navigator.serviceWorker.register("/sw.js");
+                await navigator.serviceWorker.ready;
+
+                // Convert VAPID public key from base64url to Uint8Array
+                const b64 = vapid_public_key.replace(/-/g, "+").replace(/_/g, "/");
+                const raw = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+
+                const sub = await reg.pushManager.subscribe({
+                  userVisibleOnly: true,
+                  applicationServerKey: raw,
+                });
+                const json = sub.toJSON() as any;
+                await pushApi.subscribe({
+                  endpoint: json.endpoint,
+                  p256dh: json.keys.p256dh,
+                  auth: json.keys.auth,
+                });
+                setPushStatus("enabled");
+              } catch (err: any) {
+                if (err?.message?.includes("not configured")) {
+                  setPushStatus("not_configured");
+                } else {
+                  setPushStatus("idle");
+                  alert(err.message || "Push setup failed");
+                }
+              }
+            }}
+            disabled={pushStatus === "enabling" || pushStatus === "enabled"}
+            className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 disabled:opacity-50"
+          >
+            {pushStatus === "enabling" ? t("settings_push_enabling") : t("settings_push_enable")}
+          </button>
+          {pushStatus === "enabled" && (
+            <button
+              onClick={async () => {
+                await pushApi.unsubscribeAll();
+                // Also unregister SW
+                const regs = await navigator.serviceWorker.getRegistrations();
+                for (const reg of regs) await reg.unregister();
+                setPushStatus("idle");
+              }}
+              className="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted"
+            >
+              {t("settings_push_disable")}
+            </button>
+          )}
+        </div>
       </section>
 
       {/* ── RSS Feed ── */}

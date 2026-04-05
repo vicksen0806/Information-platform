@@ -1,19 +1,26 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { authApi } from "@/lib/api";
+import { useState, useEffect } from "react";
+import { authApi, type User } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const t = useT();
+  const [user, setUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    authApi.me().then(setUser).catch(() => {});
+  }, []);
 
   const NAV_ITEMS = [
     { href: "/dashboard", label: t("nav_crawl_jobs") },
     { href: "/digests",   label: t("nav_digests") },
     { href: "/keywords",  label: t("nav_keywords") },
     { href: "/settings",  label: t("nav_settings") },
+    ...(user?.is_admin ? [{ href: "/admin", label: t("nav_admin") }] : []),
   ];
 
   async function handleLogout() {

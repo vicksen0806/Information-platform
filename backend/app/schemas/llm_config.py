@@ -1,7 +1,10 @@
-from typing import Literal
+from typing import Literal, Annotated
 from pydantic import BaseModel
 
 LlmProvider = Literal["openai", "deepseek", "qwen", "zhipu", "moonshot", "volcengine"]
+
+
+LlmSummaryStyle = Literal["concise", "detailed", "academic"]
 
 
 class LlmConfigCreate(BaseModel):
@@ -10,6 +13,7 @@ class LlmConfigCreate(BaseModel):
     model_name: str
     base_url: str | None = None
     prompt_template: str | None = None
+    summary_style: LlmSummaryStyle = "concise"
 
 
 class LlmConfigResponse(BaseModel):
@@ -18,6 +22,7 @@ class LlmConfigResponse(BaseModel):
     model_name: str
     base_url: str | None
     prompt_template: str | None = None
+    summary_style: str = "concise"
 
     model_config = {"from_attributes": True}
 
