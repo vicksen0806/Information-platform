@@ -23,3 +23,6 @@ readability-lxml>=0.8.1
 email-validator>=2.1.0
 psycopg2-binary>=2.9.9
 pywebpush>=2.0.0
+pgvector>=0.3.0
+ebooklib>=0.18
+markdown>=3.5.0

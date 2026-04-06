@@ -1,6 +1,12 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from pydantic import BaseModel
+
+
+class DigestKeywordCard(BaseModel):
+    keyword: str
+    summary_md: str
+    crawl_date: datetime | None = None
 
 
 class DigestResponse(BaseModel):
@@ -18,6 +24,7 @@ class DigestResponse(BaseModel):
     feedback: str | None = None  # 'positive' | 'negative' | None
     is_starred: bool = False
     importance_score: float | None = None
+    keyword_cards: list[DigestKeywordCard] = []
 
     model_config = {"from_attributes": True}
 
@@ -38,6 +45,22 @@ class DigestListItem(BaseModel):
     importance_score: float | None = None
 
     model_config = {"from_attributes": True}
+
+
+class KeywordHistorySummary(BaseModel):
+    keyword: str
+    latest_crawled_at: datetime | None = None
+    total_days: int = 0
+
+
+class KeywordHistoryEntry(BaseModel):
+    keyword: str
+    crawl_date: date
+    crawled_at: datetime
+    summary_md: str
+    article_count: int = 0
+    digest_id: uuid.UUID | None = None
+    title: str | None = None
 
 
 class UsageMonthly(BaseModel):

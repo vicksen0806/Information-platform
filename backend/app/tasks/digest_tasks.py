@@ -177,17 +177,30 @@ def generate_digest(self, job_id: str, user_id: str):
         try:
             result = generate_digest_sync(llm_config, keyword_texts, crawled_contents, feedback_hint=feedback_hint)
         except Exception as exc:
-            from openai import AuthenticationError as OpenAIAuthError
-            if isinstance(exc, OpenAIAuthError):
-                # API Key invalid — record error and stop immediately, do not retry
-                from app.models.crawl_job import CrawlJob
+            from openai import AuthenticationError as OpenAIAuthError, RateLimitError as OpenAIRateLimitError
+            from app.models.crawl_job import CrawlJob
+
+            def _write_digest_error(msg: str):
                 job = db.execute(
                     select(CrawlJob).where(CrawlJob.id == job_uuid)
                 ).scalar_one_or_none()
                 if job:
-                    job.digest_error = "API Key 已失效，请在设置页面更新"
+                    job.digest_error = msg
                     db.commit()
+
+            if isinstance(exc, OpenAIAuthError):
+                # API Key invalid — record error and stop immediately, do not retry
+                _write_digest_error("API Key 已失效，请在设置页面更新")
                 return
+            if isinstance(exc, OpenAIRateLimitError):
+                # Rate limit (429) — retry with longer backoff, up to 5 attempts total
+                if self.request.retries >= 4:
+                    _write_digest_error("LLM 调用超出频率限制，已重试 5 次，请稍后手动重试")
+                    return
+                raise self.retry(exc=exc, countdown=300 * (2 ** self.request.retries), max_retries=5)
+            # Other errors: standard retry with 60s backoff; write error on final failure
+            if self.request.retries >= (self.max_retries or 2):
+                _write_digest_error(f"LLM 调用失败：{type(exc).__name__}")
             raise self.retry(exc=exc, countdown=60)
 
         # Upsert digest
@@ -220,6 +233,25 @@ def generate_digest(self, job_id: str, user_id: str):
             db.add(digest)
 
         db.commit()
+
+        # Generate and store embedding via raw SQL (optional — skip silently on failure)
+        try:
+            from app.services.llm_service import generate_embedding_sync
+            from app.config import settings as _s
+            final_digest = existing_digest if existing_digest else digest
+            if getattr(llm_config, "embedding_model", None) and final_digest and getattr(_s, "PGVECTOR_ENABLED", False):
+                embed_text = f"{final_digest.title or ''}\n{(final_digest.summary_md or '')[:2000]}"
+                vec = generate_embedding_sync(llm_config, embed_text)
+                if vec:
+                    from sqlalchemy import text as sql_text
+                    vec_str = "[" + ",".join(str(v) for v in vec) + "]"
+                    db.execute(
+                        sql_text("UPDATE digests SET embedding = :vec::vector WHERE id = :id"),
+                        {"vec": vec_str, "id": str(final_digest.id)},
+                    )
+                    db.commit()
+        except Exception:
+            pass
 
         # Notify only if importance_score is absent (unknown) or above threshold
         IMPORTANCE_THRESHOLD = 0.4

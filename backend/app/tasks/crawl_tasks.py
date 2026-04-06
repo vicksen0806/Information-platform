@@ -4,7 +4,6 @@ Celery tasks for crawling.
 Note: Celery workers run synchronously, so we use synchronous SQLAlchemy
 with a regular (non-async) engine here for simplicity.
 """
-import re
 import uuid
 from datetime import datetime, timezone
 
@@ -24,24 +23,23 @@ def _get_session() -> Session:
     return Session(_engine)
 
 
-def _filter_seen_articles(content: str, seen_urls: set) -> tuple[str, set]:
-    """
-    Split content into individual articles (separated by ---), filter out
-    those whose Source URL was already processed in this job (cross-keyword dedup).
-    Returns (filtered_content, newly_seen_urls).
-    """
-    articles = content.split("\n\n---\n\n")
-    new_articles = []
-    new_urls: set = set()
-    for article in articles:
-        match = re.search(r"^Source:\s*(.+)$", article, re.MULTILINE)
-        if match:
-            url = match.group(1).strip()
-            if url in seen_urls:
-                continue  # duplicate across keywords — skip
-            new_urls.add(url)
-        new_articles.append(article)
-    return "\n\n---\n\n".join(new_articles), new_urls
+def _latest_result_for_keyword(db: Session, user_uuid, keyword_text: str, *, raw_content_only: bool = False):
+    from app.models.crawl_result import CrawlResult
+    from app.models.crawl_job import CrawlJob
+
+    stmt = (
+        select(CrawlResult)
+        .join(CrawlJob, CrawlResult.crawl_job_id == CrawlJob.id)
+        .where(
+            CrawlResult.keyword_text == keyword_text,
+            CrawlJob.user_id == user_uuid,
+        )
+        .order_by(CrawlResult.crawled_at.desc())
+        .limit(1)
+    )
+    if raw_content_only:
+        stmt = stmt.where(CrawlResult.raw_content.isnot(None))
+    return db.execute(stmt).scalar_one_or_none()
 
 
 @celery_app.task(name="app.tasks.crawl_tasks.crawl_all_users", bind=True, max_retries=1)
@@ -146,27 +144,40 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
             return
 
         has_new_content = False
-        seen_urls: set = set()  # Track article URLs seen in this job (cross-keyword dedup)
+        has_digest_input = False
 
         for kw in keywords:
-            # Check per-keyword crawl interval — skip if crawled too recently
-            if kw.last_crawled_at is not None:
-                elapsed_hours = (datetime.now(timezone.utc) - kw.last_crawled_at).total_seconds() / 3600
-                effective_interval = kw.crawl_interval_hours
+            today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+            latest_today = db.execute(
+                select(CrawlResult)
+                .join(CrawlJob, CrawlResult.crawl_job_id == CrawlJob.id)
+                .where(
+                    CrawlResult.keyword_text == kw.text,
+                    CrawlJob.user_id == user_uuid,
+                    CrawlResult.crawled_at >= today_start,
+                    CrawlResult.crawl_job_id != job.id,
+                )
+                .order_by(CrawlResult.crawled_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
 
-                # Auto-adjust: if last 5 crawls all empty, use 4× interval (max 168h)
-                recent_contents = db.execute(
-                    select(CrawlResult.raw_content)
-                    .join(CrawlJob, CrawlResult.crawl_job_id == CrawlJob.id)
-                    .where(CrawlResult.keyword_text == kw.text, CrawlJob.user_id == user_uuid)
-                    .order_by(CrawlResult.crawled_at.desc())
-                    .limit(5)
-                ).scalars().all()
-                if len(recent_contents) >= 5 and all(r is None for r in recent_contents):
-                    effective_interval = min(kw.crawl_interval_hours * 4, 168)
-
-                if elapsed_hours < effective_interval:
-                    continue  # Not due yet
+            if latest_today:
+                reused_result = CrawlResult(
+                    crawl_job_id=job.id,
+                    source_id=latest_today.source_id,
+                    keyword_text=kw.text,
+                    raw_content=latest_today.raw_content,
+                    content_hash=latest_today.content_hash,
+                    http_status=latest_today.http_status,
+                    crawled_at=latest_today.crawled_at,
+                    error_message=latest_today.error_message,
+                )
+                db.add(reused_result)
+                db.flush()
+                kw.last_crawled_at = latest_today.crawled_at
+                if latest_today.raw_content:
+                    has_digest_input = True
+                continue
 
             # Use specified URL or fall back to Google News RSS search
             if kw.url:
@@ -196,58 +207,17 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
                 db.flush()
                 continue
 
-            # Cross-keyword URL dedup: filter out articles already seen in this job
-            filtered_content, new_urls = _filter_seen_articles(content, seen_urls)
-            seen_urls.update(new_urls)
-
-            if not filtered_content.strip():
-                # All articles were duplicates from other keywords — skip
-                result = CrawlResult(
-                    crawl_job_id=job.id,
-                    source_id=None,
-                    keyword_text=kw.text,
-                    http_status=http_status,
-                    error_message="All articles duplicated across keywords",
-                )
-                db.add(result)
-                db.flush()
-                continue
-
-            content = filtered_content
             content_hash = compute_content_hash(content)
-
-            # Only deduplicate within the same day
-            today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-            duplicate = db.execute(
-                select(CrawlResult)
-                .where(
-                    CrawlResult.content_hash == content_hash,
-                    CrawlResult.crawled_at >= today_start,
-                    CrawlResult.crawl_job_id != job.id,
-                )
-                .limit(1)
-            ).scalar_one_or_none()
-
-            if duplicate:
-                result = CrawlResult(
-                    crawl_job_id=job.id,
-                    source_id=None,
-                    keyword_text=kw.text,
-                    raw_content=None,
-                    content_hash=content_hash,
-                    http_status=http_status,
-                    error_message="Content unchanged since last crawl",
-                )
-            else:
-                has_new_content = True
-                result = CrawlResult(
-                    crawl_job_id=job.id,
-                    source_id=None,
-                    keyword_text=kw.text,
-                    raw_content=content,
-                    content_hash=content_hash,
-                    http_status=http_status,
-                )
+            has_new_content = True
+            has_digest_input = True
+            result = CrawlResult(
+                crawl_job_id=job.id,
+                source_id=None,
+                keyword_text=kw.text,
+                raw_content=content,
+                content_hash=content_hash,
+                http_status=http_status,
+            )
 
             db.add(result)
             db.flush()
@@ -262,13 +232,16 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
 
         job_id_str = str(job.id)
 
-    # Dispatch digest generation if there's new content and user has LLM configured
-    if has_new_content:
+    # Dispatch digest generation if the job has any content to summarize,
+    # including content reused from an earlier crawl on the same day.
+    if has_digest_input:
         generate_digest.delay(job_id_str, user_id)
 
 
 def _check_and_alert_failures(db, keywords, user_uuid, current_job_id):
     """After each crawl job, check for keywords with 3+ consecutive failures and send alert."""
+    from app.models.crawl_result import CrawlResult
+    from app.models.crawl_job import CrawlJob
     from app.models.user_notification_config import UserNotificationConfig
     from app.models.user_email_config import UserEmailConfig
     from app.services.notification_service import send_digest_notification, send_email_notification

@@ -28,9 +28,11 @@ const TIMEZONES = [
 ];
 
 const WEBHOOK_TYPES = [
-  { value: "feishu",  label: "Feishu (飞书)" },
-  { value: "wecom",   label: "WeCom (企业微信)" },
-  { value: "generic", label: "Generic JSON" },
+  { value: "feishu",   label: "Feishu (飞书)" },
+  { value: "wecom",    label: "WeCom (企业微信)" },
+  { value: "discord",  label: "Discord" },
+  { value: "telegram", label: "Telegram" },
+  { value: "generic",  label: "Generic JSON" },
 ];
 
 export default function SettingsPage() {
@@ -43,6 +45,7 @@ export default function SettingsPage() {
   const [llmForm, setLlmForm] = useState({ provider: "volcengine", api_key: "", model_name: "ep-m-20260322064927-gvkkg", base_url: "" });
   const [promptTemplate, setPromptTemplate] = useState("");
   const [summaryStyle, setSummaryStyle] = useState<"concise" | "detailed" | "academic">("concise");
+  const [embeddingModel, setEmbeddingModel] = useState("");
   const [llmError, setLlmError] = useState("");
   const [llmSuccess, setLlmSuccess] = useState("");
   const [savingLlm, setSavingLlm] = useState(false);
@@ -95,6 +98,7 @@ export default function SettingsPage() {
       setLlmForm((prev) => ({ ...prev, provider: config.provider, model_name: config.model_name, base_url: config.base_url || "" }));
       setPromptTemplate(config.prompt_template || "");
       setSummaryStyle((config.summary_style as "concise" | "detailed" | "academic") || "concise");
+      setEmbeddingModel(config.embedding_model || "");
     }).catch(() => {});
     settingsApi.getSchedule().then(setScheduleForm).catch(() => {});
     settingsApi.getNotification().then((c) => {
@@ -129,10 +133,11 @@ export default function SettingsPage() {
     e.preventDefault();
     setLlmError(""); setLlmSuccess(""); setSavingLlm(true);
     try {
-      const config = await settingsApi.upsertLlm({ provider: llmForm.provider, api_key: llmForm.api_key, model_name: llmForm.model_name, base_url: llmForm.base_url || undefined, prompt_template: promptTemplate.trim() || undefined, summary_style: summaryStyle });
+      const config = await settingsApi.upsertLlm({ provider: llmForm.provider, api_key: llmForm.api_key, model_name: llmForm.model_name, base_url: llmForm.base_url || undefined, prompt_template: promptTemplate.trim() || undefined, summary_style: summaryStyle, embedding_model: embeddingModel.trim() || undefined });
       setLlmConfig(config);
       setPromptTemplate(config.prompt_template || "");
       setSummaryStyle((config.summary_style as "concise" | "detailed" | "academic") || "concise");
+      setEmbeddingModel(config.embedding_model || "");
       setLlmSuccess(t("settings_saved"));
     } catch (err: any) { setLlmError(err.message); }
     finally { setSavingLlm(false); }
@@ -335,6 +340,16 @@ export default function SettingsPage() {
             </div>
           </div>
           <div>
+            <label className="text-sm font-medium block mb-1">{t("settings_embedding_title")}</label>
+            <p className="text-xs text-muted-foreground mb-1.5">{t("settings_embedding_sub")}</p>
+            <input
+              value={embeddingModel}
+              onChange={(e) => setEmbeddingModel(e.target.value)}
+              className="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              placeholder={t("settings_embedding_placeholder")}
+            />
+          </div>
+          <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-sm font-medium">{t("settings_prompt_title")}</label>
               <span className="text-xs text-muted-foreground">{promptTemplate.length}/4000</span>
@@ -449,6 +464,9 @@ export default function SettingsPage() {
               className="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               placeholder={notifConfig ? t("settings_webhook_placeholder_update") : "https://open.feishu.cn/open-apis/bot/v2/hook/..."}
             />
+            {notifForm.webhook_type === "telegram" && (
+              <p className="text-xs text-muted-foreground mt-1">{t("settings_telegram_hint")}</p>
+            )}
           </div>
           <label className="flex items-center gap-2 text-sm cursor-pointer">
             <input type="checkbox" checked={notifForm.is_active} onChange={(e) => setNotifForm({ ...notifForm, is_active: e.target.checked })} className="rounded" />

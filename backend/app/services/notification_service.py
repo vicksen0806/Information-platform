@@ -73,6 +73,44 @@ def _build_generic_payload(keywords: list[str], summary_md: str, created_at: str
     }
 
 
+def _send_telegram(webhook_url: str, keywords: list[str], summary_md: str, created_at: str) -> tuple[bool, str]:
+    """
+    Send via Telegram Bot API.
+    webhook_url format: https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={CHAT_ID}
+    """
+    from urllib.parse import urlparse, parse_qs
+    parsed = urlparse(webhook_url)
+    chat_id = parse_qs(parsed.query).get("chat_id", [None])[0]
+    if not chat_id:
+        return False, "Telegram webhook_url must include ?chat_id=YOUR_CHAT_ID"
+
+    # Build base URL without query params
+    base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    kw_str = " | ".join(keywords) if keywords else "—"
+    excerpt = _strip_markdown(summary_md, max_chars=3000)
+    text = f"📰 New Digest: {kw_str}\n🕐 {created_at}\n\n{excerpt}"
+
+    resp = requests.post(
+        base_url,
+        json={"chat_id": chat_id, "text": text[:4096]},
+        timeout=10,
+    )
+    if resp.status_code != 200:
+        return False, f"Telegram API error {resp.status_code}: {resp.text[:200]}"
+    body = resp.json()
+    if not body.get("ok"):
+        return False, f"Telegram error: {body.get('description', str(body))[:200]}"
+    return True, "Telegram notification sent"
+
+
+def _build_discord_payload(keywords: list[str], summary_md: str, created_at: str) -> dict:
+    """Discord webhook payload."""
+    kw_str = " | ".join(keywords) if keywords else "—"
+    excerpt = _strip_markdown(summary_md, max_chars=1800)
+    content = f"**📰 New Digest: {kw_str}**\n_{created_at}_\n\n{excerpt}"
+    return {"content": content[:2000], "username": "Info Platform"}
+
+
 def send_digest_notification(config, keywords: list[str], summary_md: str, created_at: str) -> tuple[bool, str]:
     """
     Send digest notification via webhook.
@@ -84,10 +122,14 @@ def send_digest_notification(config, keywords: list[str], summary_md: str, creat
 
     try:
         wtype = config.webhook_type
-        if wtype == "feishu":
+        if wtype == "telegram":
+            return _send_telegram(config.webhook_url, keywords, summary_md, created_at)
+        elif wtype == "feishu":
             payload = _build_feishu_payload(keywords, summary_md, created_at)
         elif wtype == "wecom":
             payload = _build_wecom_payload(keywords, summary_md, created_at)
+        elif wtype == "discord":
+            payload = _build_discord_payload(keywords, summary_md, created_at)
         else:
             payload = _build_generic_payload(keywords, summary_md, created_at)
 
@@ -97,7 +139,7 @@ def send_digest_notification(config, keywords: list[str], summary_md: str, creat
             timeout=10,
             headers={"Content-Type": "application/json"},
         )
-        if resp.status_code != 200:
+        if resp.status_code not in (200, 204):
             return False, f"Webhook returned HTTP {resp.status_code}: {resp.text[:200]}"
 
         # Feishu and WeCom both return JSON with a non-zero code on error

@@ -1,11 +1,53 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { digestsApi, digestExportApi, type Digest } from "@/lib/api";
 import { useT } from "@/lib/i18n";
+
+function normalizeMarkdownLinks(markdown: string): string {
+  return markdown.replace(/(?<!\]\()(?<!\]\()https?:\/\/[^\s)]+/g, (url) => {
+    return `[来源](${url})`;
+  });
+}
+
+function KeywordCard({ keyword, summaryMd, crawlDate }: { keyword: string; summaryMd: string; crawlDate: string | null }) {
+  const normalizedMarkdown = normalizeMarkdownLinks(summaryMd);
+
+  return (
+    <section className="rounded-2xl border border-border bg-background p-5 shadow-sm">
+      <div className="mb-4 flex items-start justify-between gap-3 border-b border-border pb-3">
+        <div>
+          <h2 className="text-xl font-semibold text-foreground">{keyword}</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            抓取日期：{crawlDate ? new Date(crawlDate).toLocaleString() : "未知"}
+          </p>
+        </div>
+        <Link
+          href={`/digests?keyword=${encodeURIComponent(keyword)}`}
+          className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
+        >
+          {keyword}
+        </Link>
+      </div>
+
+      <div className="prose prose-slate dark:prose-invert max-w-none break-words prose-p:my-3 prose-ul:my-3 prose-li:my-1 prose-strong:text-foreground prose-a:text-primary prose-a:no-underline hover:prose-a:underline [&_a]:break-all">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            a: ({ href, children }) => (
+              <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+            ),
+          }}
+        >
+          {normalizedMarkdown}
+        </ReactMarkdown>
+      </div>
+    </section>
+  );
+}
 
 export default function DigestDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -124,6 +166,8 @@ export default function DigestDetailPage() {
   if (loading) return <div className="p-6 text-center text-muted-foreground">{t("loading")}</div>;
   if (!digest) return <div className="p-6 text-center text-muted-foreground">{t("digest_not_found")}</div>;
 
+  const fallbackMarkdown = digest.summary_md ? normalizeMarkdownLinks(digest.summary_md) : null;
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       {/* Top bar */}
@@ -163,6 +207,20 @@ export default function DigestDetailPage() {
               <button onClick={handleExportNotion} disabled={!!notionMsg} className="px-3 py-1.5 text-xs border border-border rounded hover:bg-muted disabled:opacity-60">
                 {notionMsg || t("digest_export_notion")}
               </button>
+              <a
+                href={digestExportApi.pdfUrl(digest.id)}
+                download
+                className="px-3 py-1.5 text-xs border border-border rounded hover:bg-muted"
+              >
+                {t("digest_export_pdf")}
+              </a>
+              <a
+                href={digestExportApi.epubUrl(digest.id)}
+                download
+                className="px-3 py-1.5 text-xs border border-border rounded hover:bg-muted"
+              >
+                {t("digest_export_epub")}
+              </a>
             </>
           )}
 
@@ -224,22 +282,35 @@ export default function DigestDetailPage() {
       )}
 
       {/* Content */}
-      <div className="bg-background border border-border rounded-lg p-6">
-        {digest.summary_md ? (
-          <div className="prose prose-slate dark:prose-invert max-w-none prose-h1:text-2xl prose-h2:text-lg prose-h2:border-b prose-h2:border-border prose-h2:pb-1 prose-h3:text-base prose-h3:font-semibold prose-li:my-0.5 prose-a:text-primary prose-a:no-underline hover:prose-a:underline">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                a: ({ href, children }) => (
-                  <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
-                ),
-              }}
-            >
-              {digest.summary_md}
-            </ReactMarkdown>
+      <div className="space-y-4">
+        {digest.keyword_cards && digest.keyword_cards.length > 0 ? (
+          digest.keyword_cards.map((card) => (
+            <KeywordCard
+              key={`${card.keyword}-${card.crawl_date ?? "unknown"}`}
+              keyword={card.keyword}
+              summaryMd={card.summary_md}
+              crawlDate={card.crawl_date}
+            />
+          ))
+        ) : digest.summary_md ? (
+          <div className="bg-background border border-border rounded-lg p-6">
+            <div className="prose prose-slate dark:prose-invert max-w-none break-words prose-li:my-0.5 prose-a:text-primary prose-a:no-underline hover:prose-a:underline [&_a]:break-all">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  a: ({ href, children }) => (
+                    <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+                  ),
+                }}
+              >
+                {fallbackMarkdown}
+              </ReactMarkdown>
+            </div>
           </div>
         ) : (
-          <div className="text-center py-12 text-muted-foreground">{t("digest_no_content")}</div>
+          <div className="rounded-lg border border-border bg-background py-12 text-center text-muted-foreground">
+            {t("digest_no_content")}
+          </div>
         )}
       </div>
     </div>

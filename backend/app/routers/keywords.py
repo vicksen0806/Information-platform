@@ -86,6 +86,64 @@ async def list_groups(
     return [row for row in result.scalars().all()]
 
 
+@router.post("/recommend")
+async def recommend_keywords(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Use LLM to suggest new keywords based on the user's recently used keywords.
+    Returns [{text, reason}] — up to 10 suggestions.
+    """
+    from datetime import datetime, timezone, timedelta
+    from app.models.crawl_job import CrawlJob
+    from app.models.crawl_result import CrawlResult
+    from app.models.user_llm_config import UserLlmConfig
+    from app.services.llm_service import recommend_keywords_sync
+
+    llm_cfg = (await db.execute(
+        select(UserLlmConfig).where(UserLlmConfig.user_id == current_user.id)
+    )).scalar_one_or_none()
+    if not llm_cfg:
+        raise HTTPException(status_code=400, detail="LLM config not set")
+
+    kw_result = await db.execute(
+        select(Keyword.text).where(Keyword.user_id == current_user.id, Keyword.is_active == True)
+    )
+    active_keywords = [row[0] for row in kw_result.all()]
+
+    since = datetime.now(timezone.utc) - timedelta(days=15)
+    recent_result = await db.execute(
+        select(CrawlResult.keyword_text, CrawlResult.crawled_at)
+        .join(CrawlJob, CrawlJob.id == CrawlResult.crawl_job_id)
+        .where(
+            CrawlJob.user_id == current_user.id,
+            CrawlResult.keyword_text.isnot(None),
+            CrawlResult.crawled_at >= since,
+        )
+        .order_by(CrawlResult.crawled_at.desc())
+    )
+
+    seen: set[str] = set()
+    recent_keywords: list[str] = []
+    for keyword_text, _ in recent_result.all():
+        if not keyword_text or keyword_text in seen:
+            continue
+        seen.add(keyword_text)
+        recent_keywords.append(keyword_text)
+
+    for keyword_text in active_keywords:
+        if keyword_text not in seen:
+            seen.add(keyword_text)
+            recent_keywords.append(keyword_text)
+
+    import asyncio
+    suggestions = await asyncio.get_event_loop().run_in_executor(
+        None, recommend_keywords_sync, llm_cfg, recent_keywords, active_keywords
+    )
+    return suggestions
+
+
 @router.get("/export")
 async def export_keywords(
     current_user: User = Depends(get_current_user),

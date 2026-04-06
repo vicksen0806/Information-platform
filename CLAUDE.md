@@ -15,8 +15,16 @@
 | LLM | openai SDK（base_url 切换，兼容火山方舟/DeepSeek/Qwen/ZhipuAI/Moonshot/OpenAI） |
 | 部署 | 腾讯云 CVM + Docker Compose + Nginx |
 
-## 当前进度（2026-04-04）
-**Phase 2 + Phase 2.5 + Phase 3 + Phase 4 功能全部完成**。
+## 当前进度（2026-04-05）
+**Phase 2 + Phase 2.5 + Phase 3 + Phase 4 + Phase 5 功能全部完成**。
+
+**Phase 5 新增功能（功能扩展 #2 轮）：**
+- 向量语义搜索：`pgvector` 扩展 + `digests.embedding vector(1536)` 列 + `GET /digests/search/semantic?q=` 接口；设置页新增 Embedding 模型字段（`user_llm_configs.embedding_model`）；摘要列表搜索栏加「关键词/语义」切换；pgvector 不可用时自动降级 trgm 搜索
+- Telegram / Discord 通知：`notification_service.py` 新增 `_send_telegram()`（解析 `?chat_id` query param）和 `_build_discord_payload()`；前端设置页 Webhook 类型增加两个选项，Telegram 有 URL 格式提示
+- 摘要时间线视图：`GET /digests/timeline?keyword=X&days=90` 按日期分组返回；前端摘要页在关键词过滤激活时显示「时间线」tab，带竖线视觉排版
+- 关键词智能推荐：`POST /keywords/recommend` 调用 LLM 基于现有关键词返回 `[{text, reason}]`；前端「智能推荐」按钮 + 推荐面板 + 一键添加
+- 摘要导出 EPUB/PDF：`GET /digests/{id}/export/epub`（ebooklib 纯 Python）和 `GET /digests/{id}/export/pdf`（Playwright /pdf 端点渲染带中文样式 HTML）；摘要详情页加两个下载按钮
+- 爬虫代理池：`CRAWL_PROXY_URLS` 环境变量（逗号分隔代理列表）+ `_get_random_proxy()` 随机轮换 + 传入 `_make_session(proxy_url)`；不配置时无代理行为不变
 
 **Phase 4 新增功能（功能扩展 + 技术优化）：**
 - 管理后台 `/admin`：用户列表、启用/禁用账户、全局统计卡片、触发全局抓取、审计日志（`audit_logs` 表，管理员操作记录）
@@ -118,6 +126,13 @@ cd frontend && npm run dev    # 前端开发服务器，运行在 http://localho
 - Notion token 加密：复用 `security.py` 中的 `encrypt_api_key / decrypt_api_key`（AES-256-GCM），存 `user_notion_configs.notion_token_enc`；Notion markdown 转换：内容按 ≤1900 字符分块，每块以 `code` block（language=markdown）格式写入 Notion page
 - VAPID 密钥：通过环境变量 `VAPID_PRIVATE_KEY`、`VAPID_PUBLIC_KEY`、`VAPID_EMAIL` 注入；`/push/vapid-public-key` 在未配置时返回 503；dead endpoint（410/404）在发送后自动从 `push_subscriptions` 清理
 - 周报/月报：`report_tasks.py` 中两个 Beat 任务（`crontab`），直接查询 `digests` 表按时间区间聚合；通过 `send_email_notification` 和 `send_digest_notification` 发出，复用现有 notification_service；不依赖 Celery 链式任务
+- **Phase 5 新增决策：**
+- pgvector 降级：`settings.PGVECTOR_ENABLED` 初始为 `False`，startup 建 extension + ALTER TABLE + HNSW index 成功后置 `True`；semantic search endpoint 若向量生成失败则自动降级 trgm 搜索；embedding 列为 `vector(1536)`，仅支持 1536 维模型（text-embedding-3-small/ada-002），其他维度跳过存储
+- Telegram 通知：webhook_url 格式 `https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={ID}`；service 层解析 chat_id 并 POST JSON `{chat_id, text}`；Discord 直接 POST webhook URL `{content, username}`
+- 爬虫代理池：`CRAWL_PROXY_URLS` 逗号分隔；每次 `_make_session()` 传入随机代理；不配置时 proxy_url=None 无代理行为不变
+- EPUB 导出：`ebooklib` 纯 Python，含 CSS 样式和中文 lang 标注；PDF 导出通过 Playwright 微服务 `/pdf` 端点（新增），HTML 带 CJK 字体 fallback；Playwright 不可用时降级返回 HTML bytes
+- 关键词推荐：LLM 要求 JSON 数组输出，`re.search(r'\[.*\]')` 容错解析；每次最多返回 10 条；前端推荐面板展示后逐条删除已添加的推荐词
+- 时间线端点：按 `keywords_used @> [keyword]`（PostgreSQL array contains）过滤，结果按 `created_at ASC` 排序后在 Python 端按日期分组
 
 ## 数据库变更记录（未走 Alembic，生产部署前需补写迁移）
 ```sql
@@ -197,6 +212,54 @@ CREATE INDEX idx_notification_routes_user ON notification_routes(user_id);
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX idx_digests_title_trgm ON digests USING GIN (title gin_trgm_ops);
 CREATE INDEX idx_digests_summary_trgm ON digests USING GIN (summary_md gin_trgm_ops);
+
+-- Phase 4 ALTER TABLE（startup 自动执行，幂等）
+ALTER TABLE user_llm_configs ADD COLUMN IF NOT EXISTS summary_style VARCHAR(20) NOT NULL DEFAULT 'concise';
+ALTER TABLE digests ADD COLUMN IF NOT EXISTS importance_score FLOAT;
+ALTER TABLE keywords ADD COLUMN IF NOT EXISTS requires_js BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Phase 4 新增表（dev 环境由 create_all 自动建，生产需补 Alembic）
+CREATE TABLE audit_logs (
+    id UUID PRIMARY KEY,
+    actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    actor_email VARCHAR(255),
+    action VARCHAR(100) NOT NULL,
+    resource_type VARCHAR(50),
+    resource_id VARCHAR(100),
+    detail JSONB,
+    ip_address VARCHAR(50),
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE user_notion_configs (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+    notion_token_enc TEXT NOT NULL,      -- AES-256-GCM 加密
+    database_id VARCHAR(100) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE push_subscriptions (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    endpoint TEXT NOT NULL UNIQUE,
+    p256dh TEXT NOT NULL,
+    auth VARCHAR(100) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Phase 4 pg_jieba 索引（startup 自动建，pg_jieba 不可用时跳过）
+CREATE EXTENSION IF NOT EXISTS pg_jieba;
+CREATE INDEX idx_digests_title_jieba ON digests USING GIN (to_tsvector('jieba_cfg', coalesce(title,'')));
+CREATE INDEX idx_digests_summary_jieba ON digests USING GIN (to_tsvector('jieba_cfg', coalesce(summary_md,'')));
+
+-- Phase 5 ALTER TABLE（startup 自动执行，幂等）
+ALTER TABLE user_llm_configs ADD COLUMN IF NOT EXISTS embedding_model VARCHAR(100);
+
+-- Phase 5 pgvector（startup 自动建，pgvector 未安装时跳过）
+CREATE EXTENSION IF NOT EXISTS vector;
+ALTER TABLE digests ADD COLUMN IF NOT EXISTS embedding vector(1536);
+CREATE INDEX idx_digests_embedding ON digests USING hnsw (embedding vector_cosine_ops);
 ```
 
 ## 已修复的历史 Bug（勿重蹈）
@@ -282,7 +345,7 @@ frontend/src/app/
 └── share/[token]/page.tsx           # 公开分享页（无需登录）
 
 frontend/src/lib/
-├── api.ts       # 所有 API 调用 + 类型定义（含 FeedTokenInfo / NotificationRoute / KeywordExportItem）
+├── api.ts       # 所有 API 调用 + 类型定义（含 FeedTokenInfo / NotificationRoute / KeywordExportItem / TimelineDay / KeywordRecommendation）
 └── i18n.tsx     # 中英双语，React Context + localStorage 持久化
 ```
 
@@ -294,10 +357,6 @@ frontend/src/lib/
 
 ## 下一步任务（剩余）
 
-### 生产就绪（优先）
-1. **Alembic 迁移补写**（生产部署前必做——Phase 3 新增了4张表，全部需要迁移文件）
-2. **生产部署**：腾讯云 CVM + Nginx 反向代理 + docker-compose.prod.yml
-
-### 功能扩展
-3. **管理员用户管理页**：`/admin` 页面，查看所有用户、禁用账户（`is_admin` 字段已有）
-4. **中文全文搜索优化**：安装 pg_jieba 插件，替换 `simple` 分词配置
+### 生产就绪（准备好时再做）
+1. **Alembic 迁移补写**（生产部署前必做——Phase 3/4/5 新增了 7 张表 + 多列 ALTER，全部需要迁移文件）
+2. **生产部署**：腾讯云 CVM + Nginx 反向代理 + docker-compose.prod.yml（含 VAPID 密钥、Playwright 服务、pg_jieba 自定义镜像、pgvector 编译）

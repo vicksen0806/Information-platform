@@ -43,6 +43,24 @@ async def lifespan(app: FastAPI):
         await conn.execute(text(
             "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS requires_js BOOLEAN NOT NULL DEFAULT FALSE"
         ))
+        await conn.execute(text(
+            "ALTER TABLE user_llm_configs ADD COLUMN IF NOT EXISTS embedding_model VARCHAR(100)"
+        ))
+
+    # pgvector — vector similarity search (graceful fallback if not installed)
+    async with engine.begin() as conn:
+        try:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.execute(text(
+                "ALTER TABLE digests ADD COLUMN IF NOT EXISTS embedding vector(1536)"
+            ))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_digests_embedding "
+                "ON digests USING hnsw (embedding vector_cosine_ops)"
+            ))
+            settings.PGVECTOR_ENABLED = True
+        except Exception:
+            pass  # pgvector not installed — semantic search will fall back to text search
 
     # pg_trgm — enables trigram similarity search and fast LIKE/ILIKE for Chinese
     async with engine.begin() as conn:

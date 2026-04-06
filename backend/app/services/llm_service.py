@@ -14,49 +14,27 @@ def _build_client(config) -> OpenAI:
 def generate_digest_sync(
     config,
     keywords: list[str],
-    crawled_contents: list[dict],  # [{keyword, content, group?}]
+    crawled_contents: list[dict],  # [{keyword, content}]
     feedback_hint: str | None = None,
 ) -> dict:
     """
     Call LLM to generate a structured digest. Returns {title, summary_md, tokens_used}.
     Runs synchronously (called from Celery worker).
-    crawled_contents items may include optional 'group' key for section grouping.
     """
-    from collections import defaultdict
     client = _build_client(config)
 
-    # Group content blocks by group_name; ungrouped keywords go under None
-    groups: dict[str | None, list[tuple[str, str]]] = defaultdict(list)
+    content_parts = []
     for item in crawled_contents:
         kw = item.get("keyword", "其他")
         raw = item.get("content", "")
-        group = item.get("group")  # may be absent or None
         if len(raw) > 6000:
             text = raw[:4000] + "\n...\n" + raw[-2000:]
         else:
             text = raw
-        groups[group].append((kw, text))
-
-    # Build content string: named groups first (sorted), then ungrouped
-    content_parts = []
-    has_groups = any(g is not None for g in groups)
-
-    for group_name in sorted(groups.keys(), key=lambda g: (g is None, g or "")):
-        items = groups[group_name]
-        if has_groups and group_name is not None:
-            content_parts.append(f"【分组：{group_name}】")
-        for kw, text in items:
-            content_parts.append(f"=== 关键词：{kw} ===\n{text}")
+        content_parts.append(f"=== 关键词：{kw} ===\n{text}")
 
     combined_content = "\n\n".join(content_parts)
     keywords_str = "、".join(keywords) if keywords else "（未设置关键词）"
-
-    group_instruction = ""
-    if has_groups:
-        group_instruction = (
-            "关键词已按分组标注。在「## 详细」中，先用 `## 分组名` 作为二级标题列出分组，"
-            "再在其下用 `### 关键词` 列出各关键词内容。未分组的关键词直接用 `### 关键词` 即可。\n"
-        )
 
     style = getattr(config, "summary_style", "concise") or "concise"
     style_instruction = {
@@ -66,20 +44,18 @@ def generate_digest_sync(
     }.get(style, "请用中文输出，语言简洁准确。")
 
     default_system_prompt = (
-        "你是一个专业的信息助理，负责将用户关注的各类关键词的抓取内容整理成结构清晰的每日摘要。\n"
+        "你是一个专业的信息助理，负责将用户关注的各类关键词的抓取内容整理成彼此独立的关键词卡片。\n"
         "输出必须严格使用以下 Markdown 结构：\n\n"
-        "# 今日信息摘要\n\n"
-        "## 总结\n"
-        "（2-4句话，概括今日所有关键词的整体动态，让用户30秒内了解全局）\n\n"
-        "## 详细\n\n"
-        f"{group_instruction}"
-        "每个关键词节：\n"
-        "### [关键词]\n"
+        "每个关键词必须单独成段，使用以下格式：\n"
+        "## [关键词]\n"
         "- **[要点标题]**：具体内容说明 ([来源](URL))\n\n"
         "重要规则：\n"
-        "1. 每个关键词单独一节，只写与该关键词相关的内容\n"
-        "2. 每条要点必须在末尾附上原文来源链接 ([来源](URL))，URL取自 'Source: URL' 字段\n"
-        "3. 没有来源链接时省略链接\n"
+        "1. 不要输出任何总总结、总览、跨关键词对比、分组标题或前言\n"
+        "2. 每个关键词单独一节，只写与该关键词相关的内容，不要提及其他关键词\n"
+        "3. 每个关键词至少输出 2 条要点；如果信息很少，就如实说明今日新增有限\n"
+        "4. 标题顺序尽量与输入关键词顺序一致\n"
+        "5. 每条要点必须在末尾附上原文来源链接 ([来源](URL))，URL取自 'Source: URL' 字段\n"
+        "6. 没有来源链接时省略链接\n"
         f"{style_instruction}"
     )
     system_prompt = (config.prompt_template.strip() if getattr(config, "prompt_template", None) else None) or default_system_prompt
@@ -145,6 +121,79 @@ def generate_digest_sync(
         "llm_model": config.model_name,
         "importance_score": importance_score,
     }
+
+
+def generate_embedding_sync(config, text: str) -> list[float] | None:
+    """
+    Generate a 1536-dim embedding vector for the given text.
+    Returns None if embedding_model is not configured or call fails.
+    Runs synchronously (called from Celery worker).
+    """
+    embedding_model = getattr(config, "embedding_model", None)
+    if not embedding_model:
+        return None
+    try:
+        client = _build_client(config)
+        # Truncate text to avoid token limit on embedding models
+        resp = client.embeddings.create(
+            model=embedding_model,
+            input=text[:8000],
+        )
+        vec = resp.data[0].embedding
+        if len(vec) != 1536:
+            return None  # Only store 1536-dim vectors
+        return vec
+    except Exception:
+        return None  # Embedding is optional, never block digest flow
+
+
+def recommend_keywords_sync(
+    config,
+    recent_keywords: list[str],
+    active_keywords: list[str] | None = None,
+) -> list[dict]:
+    """
+    Ask LLM to suggest new keywords based on the user's recently used keywords.
+    Returns [{text, reason}] — up to 10 suggestions.
+    """
+    client = _build_client(config)
+    recent_kw_str = "、".join(recent_keywords[:50]) if recent_keywords else "（暂无）"
+    active_kw_str = "、".join((active_keywords or [])[:30]) if active_keywords else "（暂无）"
+    prompt = (
+        f"用户近15天实际使用/抓取过的关键词：{recent_kw_str}\n"
+        f"用户当前已选关键词：{active_kw_str}\n\n"
+        "请基于“近15天实际使用/抓取过的所有关键词”来理解用户最近半个月的持续关注方向，"
+        "推荐10个新的、有价值的关键词。\n"
+        "要求：\n"
+        "1. 推荐范围要覆盖用户近半个月的整体关注面，不要只围绕当前已选的少数关键词做近义词扩写\n"
+        "2. 推荐词不能与“当前已选关键词”重复，也尽量不要只是简单加前后缀的变体\n"
+        "3. 优先推荐更具体、可持续跟踪、有信息增量的主题词\n"
+        "4. 每个推荐词附上一句简短理由（≤20字）\n"
+        "5. 严格按以下JSON格式输出，不要其他内容：\n"
+        '[{"text": "关键词1", "reason": "理由"}, {"text": "关键词2", "reason": "理由"}, ...]'
+    )
+    try:
+        response = client.chat.completions.create(
+            model=config.model_name,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=500,
+            timeout=30,
+        )
+        import json, re
+        raw = response.choices[0].message.content or ""
+        # Extract JSON array from response
+        match = re.search(r"\[.*\]", raw, re.DOTALL)
+        if not match:
+            return []
+        items = json.loads(match.group())
+        return [
+            {"text": str(item.get("text", ""))[:100], "reason": str(item.get("reason", ""))[:100]}
+            for item in items
+            if item.get("text")
+        ][:10]
+    except Exception:
+        return []
 
 
 async def test_llm_connection(config) -> LlmTestResult:

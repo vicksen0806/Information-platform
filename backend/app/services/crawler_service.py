@@ -86,7 +86,16 @@ def _get_headers(referer: str = "") -> dict:
 
 # ── Session factory ────────────────────────────────────────────────────────────
 
-def _make_session() -> requests.Session:
+def _get_random_proxy() -> str | None:
+    """Pick a random proxy from the configured pool, or return None if disabled."""
+    from app.config import settings
+    if not settings.CRAWL_PROXY_URLS:
+        return None
+    proxies = [p.strip() for p in settings.CRAWL_PROXY_URLS.split(",") if p.strip()]
+    return random.choice(proxies) if proxies else None
+
+
+def _make_session(proxy_url: str | None = None) -> requests.Session:
     """Create a session with retry on transient server errors and rate limits."""
     session = requests.Session()
     retry = Retry(
@@ -100,6 +109,8 @@ def _make_session() -> requests.Session:
     adapter = HTTPAdapter(max_retries=retry)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
+    if proxy_url:
+        session.proxies = {"http": proxy_url, "https": proxy_url}
     return session
 
 
@@ -226,7 +237,7 @@ def _extract_rss_content(feed_url: str) -> tuple[str, int]:
     feed = feedparser.parse(feed_url)
     entries = feed.entries[:MAX_ARTICLES_PER_FEED]
 
-    session = _make_session()
+    session = _make_session(proxy_url=_get_random_proxy())
     parts = []
 
     for entry in entries:
@@ -263,7 +274,7 @@ def _extract_rss_content(feed_url: str) -> tuple[str, int]:
 
 def _fetch_webpage(url: str) -> tuple[str, int]:
     """Fetch a webpage and extract clean main content via readability."""
-    session = _make_session()
+    session = _make_session(proxy_url=_get_random_proxy())
     domain = _domain_of(url)
     _rate_limit(domain)
     resp = session.get(

@@ -14,6 +14,7 @@ class LlmConfigCreate(BaseModel):
     base_url: str | None = None
     prompt_template: str | None = None
     summary_style: LlmSummaryStyle = "concise"
+    embedding_model: str | None = None  # e.g. "text-embedding-3-small", blank = disable
 
 
 class LlmConfigResponse(BaseModel):
@@ -23,6 +24,7 @@ class LlmConfigResponse(BaseModel):
     base_url: str | None
     prompt_template: str | None = None
     summary_style: str = "concise"
+    embedding_model: str | None = None
 
     model_config = {"from_attributes": True}
 

@@ -61,6 +61,7 @@ export const translations = {
   dash_status_failed: { zh: "失败", en: "Failed" },
   dash_status_generating: { zh: "生成摘要中", en: "Generating digest" },
   dash_status_completed: { zh: "已完成", en: "Completed" },
+  dash_status_completed_no_new: { zh: "已完成（无新内容）", en: "Completed (no new content)" },
   dash_status_content_found: { zh: "发现新内容", en: "Content found" },
   dash_status_no_new: { zh: "无新内容", en: "No new content" },
   dash_view_digest: { zh: "查看摘要", en: "View digest" },
@@ -73,17 +74,24 @@ export const translations = {
 
   // Digests page
   digests_title: { zh: "摘要历史", en: "Digest History" },
-  digests_subtitle_all: { zh: "所有历史摘要 — 点击查看详情", en: "All past digests — click to view" },
-  digests_subtitle_kw: { zh: "关键词「{kw}」的摘要", en: 'Digests for "{kw}"' },
+  digests_subtitle_all: { zh: "按词条查看历史抓取内容", en: "Browse crawl history by keyword" },
+  digests_subtitle_kw: { zh: "关键词「{kw}」的历史抓取内容", en: 'History for "{kw}"' },
   digests_view_list: { zh: "列表", en: "List" },
   digests_view_trend: { zh: "趋势", en: "Trend" },
-  digests_search_placeholder: { zh: "搜索摘要…", en: "Search digests..." },
+  digests_search_placeholder: { zh: "搜索词条…", en: "Search keywords..." },
   digests_searching: { zh: "搜索中…", en: "Searching..." },
-  digests_empty: { zh: "暂无摘要", en: "No digests yet" },
-  digests_empty_kw: { zh: "关键词「{kw}」暂无摘要", en: 'No digests for "{kw}" yet' },
+  digests_empty: { zh: "暂无词条历史", en: "No keyword history yet" },
+  digests_empty_kw: { zh: "关键词「{kw}」暂无历史内容", en: 'No history for "{kw}" yet' },
   digests_empty_search: { zh: "「{q}」无搜索结果", en: 'No results for "{q}"' },
   digests_sources: { zh: "{n} 个来源", en: "{n} sources" },
   digests_ungrouped: { zh: "未分组", en: "Ungrouped" },
+  digests_keyword_list_title: { zh: "全部词条", en: "All keywords" },
+  digests_keyword_history_title: { zh: "历史记录", en: "History" },
+  digests_keyword_total: { zh: "已抓取 {n} 个词条", en: "{n} keyword(s) crawled" },
+  digests_keyword_days: { zh: "{n} 天记录", en: "{n} day(s)" },
+  digests_history_count: { zh: "过去 {n} 次抓取", en: "Past {n} crawls" },
+  digests_history_articles: { zh: "{n} 篇文章", en: "{n} articles" },
+  digests_history_open: { zh: "打开原摘要", en: "Open digest" },
   trend_subtitle: { zh: "各关键词每周摘要频率 · 最近 {n} 周", en: "Digest frequency per keyword · last {n} week(s)" },
   trend_empty: { zh: "暂无摘要，生成摘要后即可查看趋势", en: "No digests yet — generate digests to see trends" },
   trend_keyword: { zh: "关键词", en: "Keyword" },
@@ -116,6 +124,7 @@ export const translations = {
   kw_group_label: { zh: "分组（可选）", en: "Group (optional)" },
   kw_group_placeholder: { zh: "如 科技", en: "e.g. Tech" },
   kw_frequency: { zh: "抓取频率", en: "Crawl frequency" },
+  kw_daily_once: { zh: "同一词条每天最多抓取一次", en: "Each keyword is crawled at most once per day" },
   kw_pin_url: { zh: "指定 URL（可选）", en: "Pin to a specific URL (optional)" },
   kw_configure: { zh: "配置", en: "Configure" },
   kw_google_news: { zh: "Google News 自动搜索", en: "Google News auto-search" },
@@ -320,6 +329,39 @@ export const translations = {
   auth_to_login: { zh: "已有账号？登录", en: "Already have an account? Sign in" },
   auth_logging_in: { zh: "登录中…", en: "Signing in..." },
   auth_registering: { zh: "注册中…", en: "Registering..." },
+
+  // Semantic search
+  digests_semantic: { zh: "语义搜索", en: "Semantic search" },
+  digests_semantic_hint: { zh: "用自然语言描述你想找的内容", en: "Describe what you're looking for in natural language" },
+  digests_search_mode_text: { zh: "关键词", en: "Keyword" },
+  digests_search_mode_semantic: { zh: "语义", en: "Semantic" },
+
+  // Timeline
+  digests_view_timeline: { zh: "时间线", en: "Timeline" },
+  digests_timeline_empty: { zh: "该关键词近 {n} 天无摘要", en: "No digests for this keyword in the last {n} days" },
+  digests_timeline_day: { zh: "{n} 条", en: "{n} digest(s)" },
+
+  // Keyword recommendations
+  kw_recommend: { zh: "智能推荐", en: "Get Recommendations" },
+  kw_recommending: { zh: "推荐中…", en: "Fetching..." },
+  kw_recommend_title: { zh: "推荐关键词", en: "Recommended Keywords" },
+  kw_recommend_add: { zh: "添加", en: "Add" },
+  kw_recommend_adding: { zh: "添加中…", en: "Adding..." },
+  kw_recommend_empty: { zh: "暂无推荐", en: "No recommendations" },
+  kw_recommend_close: { zh: "关闭", en: "Close" },
+
+  // EPUB/PDF export
+  digest_export_pdf: { zh: "下载 PDF", en: "Download PDF" },
+  digest_export_epub: { zh: "下载 EPUB", en: "Download EPUB" },
+
+  // Settings – embedding model
+  settings_embedding_title: { zh: "向量搜索（语义搜索）", en: "Vector Search (Semantic)" },
+  settings_embedding_sub: { zh: "设置 Embedding 模型后可用自然语言搜索摘要（需兼容 OpenAI Embeddings API，输出 1536 维）", en: "Set an embedding model to enable natural language digest search (requires OpenAI-compatible Embeddings API, 1536 dims)" },
+  settings_embedding_model: { zh: "Embedding 模型名称（留空则禁用）", en: "Embedding model name (leave blank to disable)" },
+  settings_embedding_placeholder: { zh: "如 text-embedding-3-small", en: "e.g. text-embedding-3-small" },
+
+  // Settings – webhook type Telegram/Discord hint
+  settings_telegram_hint: { zh: "URL 格式：https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={CHAT_ID}", en: "URL format: https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={CHAT_ID}" },
 } satisfies Record<string, { zh: string; en: string }>;
 
 export type TKey = keyof typeof translations;

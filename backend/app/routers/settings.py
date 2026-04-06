@@ -40,6 +40,7 @@ async def get_llm_config(
         base_url=config.base_url,
         prompt_template=config.prompt_template,
         summary_style=getattr(config, "summary_style", "concise") or "concise",
+        embedding_model=getattr(config, "embedding_model", None),
     )
 
 
@@ -60,6 +61,7 @@ async def upsert_llm_config(
         config.base_url = base_url
         config.prompt_template = data.prompt_template or None
         config.summary_style = data.summary_style
+        config.embedding_model = data.embedding_model or None
     else:
         if not data.api_key:
             raise HTTPException(status_code=400, detail="API Key required for first-time setup")
@@ -71,6 +73,7 @@ async def upsert_llm_config(
             base_url=base_url,
             prompt_template=data.prompt_template or None,
             summary_style=data.summary_style,
+            embedding_model=data.embedding_model or None,
         )
         db.add(config)
     await db.flush()
@@ -82,6 +85,7 @@ async def upsert_llm_config(
         base_url=config.base_url,
         prompt_template=config.prompt_template,
         summary_style=config.summary_style or "concise",
+        embedding_model=getattr(config, "embedding_model", None),
     )
 
 

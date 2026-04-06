@@ -12,6 +12,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.digest import Digest
 from app.models.user import User
+from app.routers.digests import _build_keyword_cards
 from app.schemas.digest import DigestResponse
 
 router = APIRouter(prefix="/public", tags=["public"])
@@ -43,7 +44,9 @@ async def get_shared_digest(
     digest = result.scalar_one_or_none()
     if not digest:
         raise HTTPException(status_code=404, detail="Shared digest not found or link has been revoked")
-    return digest
+    response = DigestResponse.model_validate(digest)
+    response.keyword_cards = await _build_keyword_cards(db, digest)
+    return response
 
 
 @router.get("/feed/{token}.rss")

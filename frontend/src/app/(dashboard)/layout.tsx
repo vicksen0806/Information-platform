@@ -18,7 +18,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const NAV_ITEMS = [
     { href: "/dashboard", label: t("nav_crawl_jobs") },
     { href: "/digests",   label: t("nav_digests") },
-    { href: "/keywords",  label: t("nav_keywords") },
     { href: "/settings",  label: t("nav_settings") },
     ...(user?.is_admin ? [{ href: "/admin", label: t("nav_admin") }] : []),
   ];

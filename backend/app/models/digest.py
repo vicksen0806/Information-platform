@@ -21,6 +21,8 @@ class Digest(Base):
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     share_token: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
     importance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # embedding vector(1536) is managed outside the ORM (via raw SQL) to avoid
+    # breaking when pgvector extension is not installed.
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     user: Mapped["User"] = relationship("User", back_populates="digests")

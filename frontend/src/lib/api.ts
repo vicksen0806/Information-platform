@@ -68,6 +68,7 @@ export const keywordsApi = {
   export: () => request<KeywordExportItem[]>("/keywords/export"),
   import: (data: KeywordExportItem[]) =>
     request<{ added: number; skipped: number }>("/keywords/import", { method: "POST", body: JSON.stringify(data) }),
+  recommend: () => request<KeywordRecommendation[]>("/keywords/recommend", { method: "POST" }),
 };
 
 // ── Crawl Jobs ────────────────────────────────────────────────────────────────
@@ -89,6 +90,14 @@ export const digestsApi = {
     params.set("offset", String(offset));
     return request<DigestListItem[]>(`/digests?${params.toString()}`);
   },
+  semanticSearch: (q: string, limit = 10) =>
+    request<DigestListItem[]>(`/digests/search/semantic?q=${encodeURIComponent(q)}&limit=${limit}`),
+  timeline: (keyword: string, days = 90) =>
+    request<TimelineDay[]>(`/digests/timeline?keyword=${encodeURIComponent(keyword)}&days=${days}`),
+  listKeywords: (q?: string) =>
+    request<KeywordHistorySummary[]>(`/digests/keywords${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  keywordHistory: (keyword: string, limit = 30) =>
+    request<KeywordHistoryEntry[]>(`/digests/keywords/${encodeURIComponent(keyword)}/history?limit=${limit}`),
   get: (id: string) => request<Digest>(`/digests/${id}`),
   usage: () => request<UsageStats>("/digests/usage"),
   markRead: (id: string, is_read: boolean) =>
@@ -113,7 +122,7 @@ export const publicApi = {
 // ── Settings ──────────────────────────────────────────────────────────────────
 export const settingsApi = {
   getLlm: () => request<LlmConfig>("/settings/llm"),
-  upsertLlm: (data: { provider: string; api_key: string; model_name: string; base_url?: string; prompt_template?: string; summary_style?: string }) =>
+  upsertLlm: (data: { provider: string; api_key: string; model_name: string; base_url?: string; prompt_template?: string; summary_style?: string; embedding_model?: string }) =>
     request<LlmConfig>("/settings/llm", { method: "PUT", body: JSON.stringify(data) }),
   deleteLlm: () => request("/settings/llm", { method: "DELETE" }),
   testLlm: () => request<{ success: boolean; message: string }>("/settings/llm/test", { method: "POST" }),
@@ -160,6 +169,8 @@ export const pushApi = {
 export const digestExportApi = {
   toNotion: (digestId: string) =>
     request<{ url: string }>(`/digests/${digestId}/export/notion`, { method: "POST" }),
+  pdfUrl: (digestId: string) => `/api/v1/digests/${digestId}/export/pdf`,
+  epubUrl: (digestId: string) => `/api/v1/digests/${digestId}/export/epub`,
 };
 
 export const notionSettingsApi = {
@@ -266,6 +277,29 @@ export interface Digest extends DigestListItem {
   tokens_used: number;
   llm_model: string | null;
   share_token: string | null;
+  keyword_cards: DigestKeywordCard[];
+}
+
+export interface DigestKeywordCard {
+  keyword: string;
+  summary_md: string;
+  crawl_date: string | null;
+}
+
+export interface KeywordHistorySummary {
+  keyword: string;
+  latest_crawled_at: string | null;
+  total_days: number;
+}
+
+export interface KeywordHistoryEntry {
+  keyword: string;
+  crawl_date: string;
+  crawled_at: string;
+  summary_md: string;
+  article_count: number;
+  digest_id: string | null;
+  title: string | null;
 }
 
 export interface LlmConfig {
@@ -275,6 +309,23 @@ export interface LlmConfig {
   base_url: string | null;
   prompt_template: string | null;
   summary_style: "concise" | "detailed" | "academic";
+  embedding_model: string | null;
+}
+
+export interface TimelineDay {
+  date: string;
+  digests: {
+    id: string;
+    title: string | null;
+    created_at: string;
+    importance_score: number | null;
+    is_read: boolean;
+  }[];
+}
+
+export interface KeywordRecommendation {
+  text: string;
+  reason: string;
 }
 
 export interface ScheduleConfig {

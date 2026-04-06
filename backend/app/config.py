@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     # Full-text search config: auto-set to 'jieba_cfg' at startup if pg_jieba is available
     FTS_CONFIG: str = "simple"
 
+    # pgvector: auto-set to True at startup if vector extension is available
+    PGVECTOR_ENABLED: bool = False
+
     # Playwright render service URL (set in docker-compose)
     PLAYWRIGHT_URL: str = "http://playwright:3001"
 
@@ -47,6 +50,10 @@ class Settings(BaseSettings):
     VAPID_PRIVATE_KEY: str = ""
     VAPID_PUBLIC_KEY: str = ""
     VAPID_EMAIL: str = "mailto:admin@example.com"
+
+    # Crawler proxy pool: comma-separated proxy URLs, e.g. "http://user:pass@proxy1:8080,http://proxy2:8080"
+    # Leave empty to disable proxies
+    CRAWL_PROXY_URLS: str = ""
 
     # LLM 提供商 base_url 映射
     LLM_PROVIDER_BASE_URLS: dict = {
