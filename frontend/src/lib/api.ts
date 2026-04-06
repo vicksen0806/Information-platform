@@ -300,6 +300,12 @@ export interface KeywordHistoryEntry {
   article_count: number;
   digest_id: string | null;
   title: string | null;
+  sources: KeywordHistorySource[];
+}
+
+export interface KeywordHistorySource {
+  name: string;
+  url: string;
 }
 
 export interface LlmConfig {

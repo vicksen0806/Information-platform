@@ -1,5 +1,7 @@
 import uuid
+import re
 from datetime import timezone
+from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func, String, update
@@ -22,6 +24,7 @@ from app.schemas.digest import (
     DigestKeywordCard,
     KeywordHistorySummary,
     KeywordHistoryEntry,
+    KeywordHistorySource,
 )
 
 router = APIRouter(prefix="/digests", tags=["digests"])
@@ -29,6 +32,19 @@ router = APIRouter(prefix="/digests", tags=["digests"])
 
 class FeedbackCreate(BaseModel):
     value: str  # 'positive' | 'negative'
+
+
+def _normalize_keyword_label(keyword: str | None) -> str:
+    if not keyword:
+        return ""
+
+    normalized = keyword.strip()
+    if (
+        len(normalized) >= 2
+        and ((normalized.startswith("[") and normalized.endswith("]")) or (normalized.startswith("【") and normalized.endswith("】")))
+    ):
+        normalized = normalized[1:-1].strip()
+    return normalized
 
 
 def _split_digest_keyword_sections(summary_md: str | None) -> dict[str, str]:
@@ -41,7 +57,10 @@ def _split_digest_keyword_sections(summary_md: str | None) -> dict[str, str]:
     for raw_line in summary_md.splitlines():
         line = raw_line.rstrip()
         if line.startswith("## "):
-            current_keyword = line[3:].strip()
+            current_keyword = _normalize_keyword_label(line[3:].strip())
+            if current_keyword in {"", "总结", "详细"}:
+                current_keyword = None
+                continue
             sections.setdefault(current_keyword, [])
             continue
         if current_keyword is not None:
@@ -50,45 +69,53 @@ def _split_digest_keyword_sections(summary_md: str | None) -> dict[str, str]:
     return {
         keyword: "\n".join(lines).strip()
         for keyword, lines in sections.items()
-        if keyword not in {"总结", "详细"}
+        if keyword and keyword not in {"总结", "详细"}
     }
 
 
 def _build_fallback_card_markdown(raw_content: str | None) -> str:
-    if not raw_content:
+    articles = _extract_articles(raw_content)
+    if not articles:
         return "今日无可展示内容。"
 
-    articles = [part.strip() for part in raw_content.split("\n\n---\n\n") if part.strip()]
+    grouped: dict[str, dict] = {}
+    order: list[str] = []
+
+    for article in articles:
+        key = _normalize_article_title(article["title"]) or article["source_url"] or str(len(order))
+        if key not in grouped:
+            grouped[key] = {
+                "title": article["title"],
+                "summary": article["body"],
+                "sources": [],
+                "seen_urls": set(),
+            }
+            order.append(key)
+        if article["source_url"] and article["source_url"] not in grouped[key]["seen_urls"]:
+            grouped[key]["seen_urls"].add(article["source_url"])
+            grouped[key]["sources"].append(
+                KeywordHistorySource(name=article["source_name"], url=article["source_url"])
+            )
+
     bullets: list[str] = []
-
-    for article in articles[:6]:
-        lines = [line.strip() for line in article.splitlines() if line.strip()]
-        title = ""
-        source_url = ""
-        body_lines: list[str] = []
-
-        for line in lines:
-            if line.startswith("## "):
-                title = line[3:].strip()
-            elif line.startswith("Source: "):
-                source_url = line[len("Source: "):].strip()
-            else:
-                body_lines.append(line)
-
-        summary = " ".join(body_lines).strip()
+    for key in order[:6]:
+        item = grouped[key]
+        summary = item["summary"].strip()
         if len(summary) > 160:
             summary = summary[:160].rstrip() + "..."
 
         bullet = "- "
-        if title:
-            bullet += f"**{title}**"
+        if item["title"]:
+            bullet += f"**{item['title']}**"
         else:
             bullet += "**抓取内容**"
 
         if summary:
             bullet += f"：{summary}"
-        if source_url:
-            bullet += f" ([来源]({source_url}))"
+
+        source_links = _format_source_links(item["sources"])
+        if source_links:
+            bullet += f"（{source_links}）"
 
         bullets.append(bullet)
 
@@ -102,6 +129,190 @@ def _article_count_from_raw_content(raw_content: str | None) -> int:
     if raw_content.startswith("## "):
         count += 1
     return count
+
+
+def _source_name_from_url(url: str) -> str:
+    host = urlparse(url).netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+
+    known_names = {
+        "news.google.com": "Google",
+        "google.com": "Google",
+        "linkedin.com": "LinkedIn",
+        "x.com": "X",
+        "twitter.com": "X",
+        "youtube.com": "YouTube",
+        "github.com": "GitHub",
+        "reddit.com": "Reddit",
+        "medium.com": "Medium",
+        "substack.com": "Substack",
+        "techcrunch.com": "TechCrunch",
+        "theverge.com": "The Verge",
+    }
+    if host in known_names:
+        return known_names[host]
+
+    for domain, name in known_names.items():
+        if host.endswith(f".{domain}"):
+            return name
+
+    root = host.split(".")[0] if host else ""
+    return root.capitalize() if root else "来源"
+
+
+def _source_name_from_title(title: str | None) -> str | None:
+    if not title:
+        return None
+    for separator in (" - ", " | ", "｜", "—", " – "):
+        if separator in title:
+            tail = title.rsplit(separator, 1)[-1].strip()
+            if 1 <= len(tail) <= 30:
+                return tail
+    return None
+
+
+def _normalize_article_title(title: str | None) -> str:
+    if not title:
+        return ""
+    normalized = title.lower().strip()
+    normalized = re.sub(r"\s+", " ", normalized)
+    normalized = re.sub(r"[\W_]+", "", normalized)
+    return normalized
+
+
+def _extract_articles(raw_content: str | None) -> list[dict]:
+    if not raw_content:
+        return []
+
+    articles: list[dict] = []
+    for article in [part.strip() for part in raw_content.split("\n\n---\n\n") if part.strip()]:
+        lines = [line.strip() for line in article.splitlines() if line.strip()]
+        title = ""
+        source_url = ""
+        body_lines: list[str] = []
+
+        for line in lines:
+            if line.startswith("## "):
+                title = line[3:].strip()
+            elif line.startswith("Source: "):
+                source_url = line[len("Source: "):].strip()
+            else:
+                body_lines.append(line)
+
+        articles.append({
+            "title": title,
+            "body": " ".join(body_lines).strip(),
+            "source_url": source_url,
+            "source_name": _source_name_from_title(title) or _source_name_from_url(source_url),
+        })
+
+    return articles
+
+
+def _plain_text(value: str) -> str:
+    normalized = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", value)
+    normalized = normalized.replace("**", "")
+    normalized = re.sub(r"https?://\S+", " ", normalized)
+    normalized = re.sub(r"[^\w\u4e00-\u9fff]+", "", normalized.lower())
+    return normalized
+
+
+def _bigram_set(value: str) -> set[str]:
+    if len(value) < 2:
+        return {value} if value else set()
+    return {value[idx:idx + 2] for idx in range(len(value) - 1)}
+
+
+def _format_source_links(sources: list[KeywordHistorySource]) -> str:
+    unique_sources: list[KeywordHistorySource] = []
+    seen_urls: set[str] = set()
+    for source in sources:
+        if not source.url or source.url in seen_urls:
+            continue
+        seen_urls.add(source.url)
+        unique_sources.append(source)
+    return " / ".join(f"[{source.name}]({source.url})" for source in unique_sources)
+
+
+def _attach_inline_sources(summary_md: str, raw_content: str | None) -> str:
+    articles = _extract_articles(raw_content)
+    if not articles:
+        return summary_md
+
+    article_scores = [
+        {
+            "sources": [KeywordHistorySource(name=article["source_name"], url=article["source_url"])],
+            "text": _plain_text(f"{article['title']} {article['body']}"),
+        }
+        for article in articles
+    ]
+
+    processed_lines: list[str] = []
+    for raw_line in summary_md.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.lstrip()
+        if not stripped.startswith(("- ", "* ")):
+            processed_lines.append(raw_line)
+            continue
+
+        base_line = re.sub(r"\s*(\(|（)?\s*\[来源\]\([^)]+\)\s*(\)|）)?\s*$", "", raw_line).rstrip()
+        bullet_text = _plain_text(base_line)
+        if not bullet_text:
+            processed_lines.append(base_line)
+            continue
+
+        bullet_bigrams = _bigram_set(bullet_text)
+        scored_matches: list[tuple[int, KeywordHistorySource]] = []
+        for article in article_scores:
+            article_bigrams = _bigram_set(article["text"])
+            score = len(bullet_bigrams & article_bigrams)
+            if score > 1:
+              scored_matches.append((score, article["sources"][0]))
+
+        if not scored_matches:
+            processed_lines.append(base_line)
+            continue
+
+        best_score = max(score for score, _ in scored_matches)
+        chosen_sources = [
+            source
+            for score, source in scored_matches
+            if score >= max(2, best_score // 2)
+        ]
+        source_links = _format_source_links(chosen_sources)
+        if source_links:
+            processed_lines.append(f"{base_line}（{source_links}）")
+        else:
+            processed_lines.append(base_line)
+
+    return "\n".join(processed_lines)
+
+
+def _extract_source_links(raw_content: str | None) -> list[KeywordHistorySource]:
+    if not raw_content:
+        return []
+
+    links: list[KeywordHistorySource] = []
+    seen_urls: set[str] = set()
+
+    for article in [part.strip() for part in raw_content.split("\n\n---\n\n") if part.strip()]:
+        for raw_line in article.splitlines():
+            line = raw_line.strip()
+            if not line.startswith("Source: "):
+                continue
+            source_url = line[len("Source: "):].strip()
+            if not source_url or source_url in seen_urls:
+                continue
+            seen_urls.add(source_url)
+            links.append(
+                KeywordHistorySource(
+                    name=_source_name_from_url(source_url),
+                    url=source_url,
+                )
+            )
+
+    return links
 
 
 async def _build_keyword_cards(db: AsyncSession, digest: Digest) -> list[DigestKeywordCard]:
@@ -123,12 +334,15 @@ async def _build_keyword_cards(db: AsyncSession, digest: Digest) -> list[DigestK
 
     ordered_keywords: list[str] = []
     for keyword in (digest.keywords_used or []):
+        keyword = _normalize_keyword_label(keyword)
         if keyword not in ordered_keywords:
             ordered_keywords.append(keyword)
     for keyword in sections:
+        keyword = _normalize_keyword_label(keyword)
         if keyword not in ordered_keywords:
             ordered_keywords.append(keyword)
     for keyword in crawl_map:
+        keyword = _normalize_keyword_label(keyword)
         if keyword not in ordered_keywords:
             ordered_keywords.append(keyword)
 
@@ -254,6 +468,8 @@ async def get_keyword_history(
         body = sections.get(keyword, "").strip()
         if not body:
             body = _build_fallback_card_markdown(row.raw_content)
+        else:
+            body = _attach_inline_sources(body, row.raw_content)
 
         entries.append(
             KeywordHistoryEntry(
@@ -264,6 +480,7 @@ async def get_keyword_history(
                 article_count=_article_count_from_raw_content(row.raw_content),
                 digest_id=row.digest_id,
                 title=row.title,
+                sources=_extract_source_links(row.raw_content),
             )
         )
         if len(entries) >= limit:

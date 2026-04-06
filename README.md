@@ -1,171 +1,114 @@
 # Info Platform
 
-A multi-user SaaS information aggregation platform. Users configure keywords and sources; the system crawls them daily and generates AI-powered digests.
+多用户信息聚合 SaaS 平台。用户维护词条列表，系统按词条抓取内容、生成摘要，并通过站内查看、Webhook、Email 等方式分发结果。
 
-## Tech Stack
+## 当前产品形态
 
-| Layer | Technology |
+- `抓取任务`
+  管理词条、生成分组、手动触发抓取、查看每次任务状态。
+- `词条设置`
+  按词条查看历史记录。每个词条每天最多抓取一次；历史内容按天展示。
+- `系统设置`
+  当前保留账户、LLM 配置、Webhook 通知、Email、API 用量。
+
+## 当前关键规则
+
+- 抓取逻辑以“词条”为基准，不再以单次批量摘要为主。
+- 同一词条一天最多抓取一次。
+- 如果当天已抓取，再次触发时直接复用当天内容。
+- 历史页中的来源链接跟在每个小标题末尾，而不是集中显示。
+- Dashboard 中可将当前词条列表整体生成分组；分组可删除，删除分组不会删除词条本身。
+
+## 技术栈
+
+| 层 | 技术 |
 |---|---|
-| Frontend | Next.js 14 (App Router) + Tailwind CSS |
-| Backend | FastAPI (Python) |
-| Database | PostgreSQL |
-| Task Queue | Celery + Redis |
-| Crawler | requests + BeautifulSoup + readability-lxml + feedparser |
-| LLM | openai SDK (compatible with Volcengine / DeepSeek / Qwen / Zhipu / Moonshot / OpenAI) |
+| 前端 | Next.js 14 App Router + Tailwind CSS |
+| 后端 | FastAPI |
+| 数据库 | PostgreSQL |
+| 任务队列 | Celery + Redis |
+| 抓取 | requests + BeautifulSoup + readability-lxml + feedparser |
+| LLM | OpenAI SDK 兼容接口 |
+| 部署 | Docker Compose |
 
-## Quick Start (Mac)
+## 本地启动
 
-**Prerequisites:** Docker Desktop installed and running.
+前置条件：
+- Docker Desktop 已启动
+- Node.js / npm 可用
 
 ```bash
-# 1. Clone and start backend services
-cd Information-platform
+# 启动后端服务
 docker compose up -d
 
-# 2. Start frontend (separate terminal)
+# 启动前端开发环境
 cd frontend
 npm install
 npm run dev
-# Runs at http://localhost:3001 (3000 is occupied by Docker frontend container)
 ```
 
-**Access:**
-- Frontend: http://localhost:3001
-- Backend API docs: http://localhost:8000/docs
-- Health check: http://localhost:8000/health
+默认访问：
+- 前端：`http://localhost:3000`
+- 后端文档：`http://localhost:8000/docs`
+- 健康检查：`http://localhost:8000/health`
 
-**Default admin account** (configured in `.env`):
-- Email: `admin@example.com`
-- Password: `changeme123`
+默认管理员：
+- 邮箱：`admin@example.com`
+- 密码：`changeme123`
 
-## Features
+## 目录结构
 
-### Core
-- **Keywords** — Add topics to track (e.g. "AI", "Trump", "tplink"). Supports grouping by tag and per-keyword crawl frequency (1h / 6h / 12h / daily / 3-day / weekly).
-- **Crawl Jobs** — Trigger manual crawls or let the scheduler run automatically. Full-text extraction via Mozilla Readability algorithm.
-- **AI Digests** — LLM generates structured summaries per keyword with three sections: overall summary, per-keyword details (with source links), and bullet-point highlights.
-- **Digest History** — Browse all past digests with full-text search and per-keyword trend filtering.
-- **Public Share Links** — Generate a public read-only link for any digest; revokable at any time.
-
-### Settings
-- **LLM Configuration** — Connect any OpenAI-compatible provider (Volcengine Doubao, DeepSeek, Qwen, etc.)
-- **Daily Schedule** — Choose the time and timezone for automatic daily crawls (granularity: 30 min)
-- **Push Notifications** — Webhook push to Feishu, WeCom, or any generic JSON endpoint when a digest is ready
-- **API Usage** — Token consumption statistics by month with breakdown chart
-
-### Monitoring
-- `GET /health` — Detailed health check: DB, Redis, and Celery worker status
-
-## LLM Setup (Volcengine example)
-
-| Field | Value |
-|---|---|
-| Provider | `volcengine` |
-| Base URL | `https://ark.cn-beijing.volces.com/api/coding/v3` |
-| Model | `doubao-seed-2.0-code` (or your endpoint ID) |
-| API Key | UUID format from Volcengine console |
-
-## Project Structure
-
-```
+```text
 .
 ├── backend/
-│   ├── app/
-│   │   ├── models/          # SQLAlchemy ORM models
-│   │   ├── routers/         # FastAPI route handlers
-│   │   │   └── public.py    # Unauthenticated share-link endpoint
-│   │   ├── schemas/         # Pydantic request/response schemas
-│   │   ├── services/        # Business logic (crawler, LLM, notifications)
-│   │   ├── tasks/           # Celery tasks (crawl, digest)
-│   │   ├── core/            # Auth, security, dependencies
-│   │   ├── config.py        # Settings (loaded from .env)
-│   │   ├── database.py      # SQLAlchemy async engine
-│   │   └── main.py          # FastAPI app + lifespan + health check
-│   └── requirements.txt
+│   └── app/
+│       ├── models/      # 数据模型
+│       ├── routers/     # API 路由
+│       ├── schemas/     # Pydantic schema
+│       ├── services/    # 抓取、LLM、通知等服务
+│       ├── tasks/       # Celery 任务
+│       └── main.py      # FastAPI 入口
 ├── frontend/
 │   └── src/app/
-│       ├── (auth)/          # Login, register pages
-│       ├── (dashboard)/     # Main app pages
-│       │   ├── dashboard/   # Crawl job status
-│       │   ├── digests/     # Digest history + detail (share button)
-│       │   ├── keywords/    # Keyword management (groups + intervals)
-│       │   └── settings/    # LLM, schedule, notification, usage
-│       └── share/[token]/   # Public share page (no login required)
+│       ├── (auth)/      # 登录/注册
+│       ├── (dashboard)/
+│       │   ├── dashboard/
+│       │   ├── digests/
+│       │   └── settings/
+│       └── share/[token]/
 ├── docker/
-│   ├── Dockerfile.backend
-│   └── Dockerfile.worker
 ├── docker-compose.yml
-└── .env
+├── README.md
+└── CLAUDE.md
 ```
 
-## API Endpoints
+## 常用接口
 
-| Method | Path | Description |
+| Method | Path | 说明 |
 |---|---|---|
-| POST | `/api/v1/auth/login` | Login |
-| POST | `/api/v1/auth/register` | Register |
-| GET/POST | `/api/v1/keywords` | List (supports `?group=`) / create keywords |
-| GET | `/api/v1/keywords/groups` | List distinct group names |
-| PATCH/DELETE | `/api/v1/keywords/{id}` | Update / delete keyword |
-| GET/POST | `/api/v1/crawl-jobs` | List jobs / trigger crawl |
-| GET | `/api/v1/crawl-jobs/{id}` | Get job status |
-| GET | `/api/v1/digests` | List digests (supports `?q=` search, `?keyword=` filter) |
-| GET | `/api/v1/digests/usage` | Token usage stats |
-| GET | `/api/v1/digests/{id}` | Get digest detail |
-| POST/DELETE | `/api/v1/digests/{id}/share` | Generate / revoke public share token |
-| GET | `/api/v1/public/digests/{token}` | Public digest access (no auth) |
-| GET/PUT | `/api/v1/settings/llm` | LLM config |
-| POST | `/api/v1/settings/llm/test` | Test LLM connection |
-| GET/PUT | `/api/v1/settings/schedule` | Daily schedule config |
-| GET/PUT/DELETE | `/api/v1/settings/notification` | Webhook notification config |
-| POST | `/api/v1/settings/notification/test` | Send test notification |
-| GET | `/health` | Health check (DB + Redis + Celery) |
+| GET/POST | `/api/v1/keywords` | 词条列表 / 新增词条 |
+| GET | `/api/v1/keywords/groups` | 获取分组列表 |
+| PATCH/DELETE | `/api/v1/keywords/{id}` | 更新 / 删除词条 |
+| GET/POST | `/api/v1/crawl-jobs` | 抓取任务列表 / 触发抓取 |
+| POST | `/api/v1/crawl-jobs/{id}/retry` | 重试失败任务 |
+| GET | `/api/v1/digests/keywords` | 获取词条历史摘要列表 |
+| GET | `/api/v1/digests/keywords/{keyword}/history` | 获取单个词条按天历史 |
+| GET | `/api/v1/digests/{id}` | 摘要详情 |
+| GET | `/api/v1/digests/usage` | API 用量统计 |
+| GET/PUT | `/api/v1/settings/llm` | LLM 配置 |
+| GET/PUT/DELETE | `/api/v1/settings/notification` | Webhook 通知配置 |
+| GET/PUT/DELETE | `/api/v1/settings/email` | Email 配置 |
 
-## Database Schema Notes
+## 开发说明
 
-The following columns were added via `ALTER TABLE` (not through Alembic migrations):
+- 仓库内的 `CLAUDE.md` 作为 AI 协作记忆文件维护，记录当前有效的产品规则和开发约定。
+- 如果 `README.md` 与 `CLAUDE.md` 有冲突：
+  - `README.md` 以稳定说明为主
+  - `CLAUDE.md` 以当前开发中的真实状态为准
 
-```sql
--- crawl_results table
-ALTER TABLE crawl_results ALTER COLUMN source_id DROP NOT NULL;
-ALTER TABLE crawl_results ADD COLUMN keyword_text TEXT;
+## 约束与注意事项
 
--- crawl_jobs table
-ALTER TABLE crawl_jobs ADD COLUMN new_content_found BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE crawl_jobs ADD COLUMN digest_error TEXT;
-
--- keywords table
-ALTER TABLE keywords ADD COLUMN group_name TEXT;
-ALTER TABLE keywords ADD COLUMN crawl_interval_hours INTEGER NOT NULL DEFAULT 24;
-ALTER TABLE keywords ADD COLUMN last_crawled_at TIMESTAMPTZ;
-
--- digests table
-ALTER TABLE digests ADD COLUMN share_token TEXT UNIQUE;
-CREATE INDEX idx_digests_share_token ON digests(share_token) WHERE share_token IS NOT NULL;
-```
-
-New tables created directly:
-- `user_schedule_configs`
-- `user_notification_configs`
-
-GIN indexes for full-text search:
-```sql
-CREATE INDEX idx_digests_fts ON digests USING GIN (
-    to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(summary_md,''))
-);
-CREATE INDEX idx_digests_keywords ON digests USING GIN (keywords_used);
-```
-
-**Before production deployment:** write Alembic migration files to capture all the above.
-
-## Known Constraints
-
-- `bcrypt==4.0.1` pinned — passlib is incompatible with 5.x
-- Celery workers use synchronous `psycopg2`; FastAPI uses async `asyncpg`
-- `database.py` auto-converts psycopg2 URL to asyncpg on import
-- LLM API keys are AES-256-GCM encrypted at rest, never returned in plaintext
-- JWT stored in httpOnly cookies (XSS-safe)
-- Google News RSS is the default source when no URL is specified for a keyword
-- Volcengine Coding Plan base URL: `https://ark.cn-beijing.volces.com/api/coding/v3` (not `/api/v3`)
-- Feishu/WeCom return HTTP 200 even for invalid tokens — response body `code`/`errcode` must be checked
-- Per-keyword `crawl_interval_hours` is checked at crawl time; `last_crawled_at` is updated after each attempt
+- LLM API Key 与 SMTP 密码使用 AES-256-GCM 加密存储。
+- JWT 使用 httpOnly cookie，不放在 localStorage。
+- FastAPI 使用异步 `asyncpg`；Celery worker 使用同步 `psycopg2`。
+- 当前仍存在未完全沉淀为 Alembic migration 的数据库变更，生产部署前应补齐迁移。

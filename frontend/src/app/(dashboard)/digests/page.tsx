@@ -1,6 +1,5 @@
 "use client";
 import { Suspense, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -28,18 +27,8 @@ function HistoryCard({ entry }: { entry: KeywordHistoryEntry }) {
           <h3 className="text-lg font-semibold text-foreground">
             {new Date(entry.crawled_at).toLocaleDateString()}
           </h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {new Date(entry.crawled_at).toLocaleString()} · {t("digests_history_articles", { n: entry.article_count })}
-          </p>
+          <p className="mt-1 text-xs text-muted-foreground">{new Date(entry.crawled_at).toLocaleString()}</p>
         </div>
-        {entry.digest_id && (
-          <Link
-            href={`/digests/${entry.digest_id}`}
-            className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
-          >
-            {t("digests_history_open")}
-          </Link>
-        )}
       </div>
 
       <div className="prose prose-slate dark:prose-invert max-w-none break-words prose-p:my-3 prose-ul:my-3 prose-li:my-1 prose-strong:text-foreground prose-a:text-primary prose-a:no-underline hover:prose-a:underline [&_a]:break-all">
@@ -128,9 +117,18 @@ function DigestsContent() {
 
         <div className="relative mb-4">
           <input
+            type="search"
+            name="keyword-search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t("digests_search_placeholder")}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            data-form-type="other"
+            data-lpignore="true"
+            data-1p-ignore="true"
             className="w-full rounded-md border border-input py-2 pl-9 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           />
           <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">

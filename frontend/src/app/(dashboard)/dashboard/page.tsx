@@ -1,16 +1,14 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import {
   crawlJobsApi,
+  digestsApi,
   keywordsApi,
-  statsApi,
   type CrawlJob,
-  type CrawlResult,
   type Keyword,
-  type KeywordExportItem,
+  type KeywordHistorySummary,
   type KeywordRecommendation,
-  type Stats,
 } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 
@@ -28,109 +26,14 @@ function isActive(job: CrawlJob) {
   return job.status === "pending" || job.status === "running" || isGeneratingDigest(job);
 }
 
-function MiniTrend({ data }: { data: { day: string; count: number }[] }) {
-  const t = useT();
-  const days = Array.from({ length: 30 }, (_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - (29 - i));
-    return d.toISOString().slice(0, 10);
-  });
-  const countMap: Record<string, number> = {};
-  for (const { day, count } of (data || [])) countMap[day] = count;
-  const filled = days.map((day) => ({ day, count: countMap[day] || 0 }));
-  const total = filled.reduce((s, d) => s + d.count, 0);
-  const max = Math.max(...filled.map((d) => d.count), 1);
-
-  if (total === 0) {
-    return (
-      <div className="flex items-center gap-1.5">
-        <div className="flex h-4 items-end gap-px">
-          {filled.map((d) => (
-            <div key={d.day} className="w-0.5 rounded-sm bg-muted" style={{ height: "4px" }} />
-          ))}
-        </div>
-        <span className="text-xs text-muted-foreground/40">{t("kw_no_data")}</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-1.5" title={`${t("kw_article_trend")}: ${total}`}>
-      <div className="flex h-4 items-end gap-px">
-        {filled.map((d) => (
-          <div
-            key={d.day}
-            className={`w-0.5 rounded-sm ${d.count > 0 ? "bg-primary/70" : "bg-muted"}`}
-            style={{ height: d.count > 0 ? `${Math.max((d.count / max) * 100, 25)}%` : "4px" }}
-            title={`${d.day}: ${d.count}`}
-          />
-        ))}
-      </div>
-      <span className="text-xs text-muted-foreground">{total} {t("kw_article_trend")}</span>
-    </div>
-  );
-}
-
-function useIntervalOptions() {
-  const t = useT();
-  return [
-    { value: 1, label: t("kw_interval_1") },
-    { value: 6, label: t("kw_interval_6") },
-    { value: 12, label: t("kw_interval_12") },
-    { value: 24, label: t("kw_interval_24") },
-    { value: 72, label: t("kw_interval_72") },
-    { value: 168, label: t("kw_interval_168") },
-  ];
-}
-
-function ResultsPreview({ jobId }: { jobId: string }) {
-  const t = useT();
-  const [results, setResults] = useState<CrawlResult[] | null>(null);
-
-  useEffect(() => {
-    crawlJobsApi.results(jobId).then(setResults).catch(() => setResults([]));
-  }, [jobId]);
-
-  if (!results) return <p className="px-1 py-2 text-xs text-muted-foreground">{t("dash_preview_loading")}</p>;
-
-  return (
-    <div className="mt-2 space-y-1.5 border-t border-border pt-2">
-      {results.map((r) => (
-        <div key={r.id} className="flex items-start gap-2 text-xs">
-          <span
-            className={`mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full ${
-              r.error_message && r.error_message !== "Content unchanged since last crawl"
-                ? "bg-red-400"
-                : r.error_message
-                  ? "bg-yellow-400"
-                  : "bg-green-400"
-            }`}
-          />
-          <div className="min-w-0">
-            <span className="font-medium">{r.keyword_text || "—"}</span>
-            {r.error_message ? (
-              <span className="ml-1 text-muted-foreground">
-                {r.error_message === "Content unchanged since last crawl" ? t("dash_preview_dup") : t("dash_preview_error")}
-              </span>
-            ) : (
-              <span className="ml-1 text-muted-foreground">{t("dash_preview_articles", { n: r.article_count })}</span>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export default function DashboardPage() {
   const t = useT();
-  const intervalOptions = useIntervalOptions();
 
   const [jobs, setJobs] = useState<CrawlJob[]>([]);
-  const [stats, setStats] = useState<Stats | null>(null);
   const [keywords, setKeywords] = useState<Keyword[]>([]);
+  const [historicalKeywords, setHistoricalKeywords] = useState<KeywordHistorySummary[]>([]);
   const [groups, setGroups] = useState<string[]>([]);
-  const [articleStats, setArticleStats] = useState<Record<string, { day: string; count: number }[]>>({});
+  const [selectedGroup, setSelectedGroup] = useState<string>("all");
 
   const [loadingJobs, setLoadingJobs] = useState(true);
   const [loadingKeywords, setLoadingKeywords] = useState(true);
@@ -138,33 +41,17 @@ export default function DashboardPage() {
 
   const [crawling, setCrawling] = useState(false);
   const [retryingId, setRetryingId] = useState<string | null>(null);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [, setTick] = useState(0);
 
   const [newText, setNewText] = useState("");
-  const [newUrl, setNewUrl] = useState("");
-  const [newSourceType, setNewSourceType] = useState("webpage");
-  const [hasUrl, setHasUrl] = useState(false);
-  const [newGroup, setNewGroup] = useState("");
-  const [newInterval, setNewInterval] = useState(24);
   const [savingKeyword, setSavingKeyword] = useState(false);
-
-  const [filterGroup, setFilterGroup] = useState<string | null>(null);
-  const [importMsg, setImportMsg] = useState("");
-  const importInputRef = useRef<HTMLInputElement>(null);
 
   const [recommendations, setRecommendations] = useState<KeywordRecommendation[]>([]);
   const [recommendLoading, setRecommendLoading] = useState(false);
   const [showRecommend, setShowRecommend] = useState(false);
   const [addingRec, setAddingRec] = useState<string | null>(null);
-
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editUrl, setEditUrl] = useState("");
-  const [editSourceType, setEditSourceType] = useState("webpage");
-  const [editHasUrl, setEditHasUrl] = useState(false);
-  const [editGroup, setEditGroup] = useState("");
-  const [editInterval, setEditInterval] = useState(24);
-  const [editRequiresJs, setEditRequiresJs] = useState(false);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [deletingGroup, setDeletingGroup] = useState<string | null>(null);
 
   const hasActive = jobs.some(isActive);
   const digestError = jobs.find((j) => j.digest_error)?.digest_error ?? null;
@@ -183,14 +70,14 @@ export default function DashboardPage() {
 
   const loadKeywords = useCallback(async () => {
     try {
-      const [kws, grps, statsMap] = await Promise.all([
+      const [kws, history, groupNames] = await Promise.all([
         keywordsApi.list(),
+        digestsApi.listKeywords(),
         keywordsApi.listGroups(),
-        keywordsApi.articleStats(),
       ]);
       setKeywords(kws);
-      setGroups(grps);
-      setArticleStats(statsMap);
+      setHistoricalKeywords(history);
+      setGroups(groupNames);
     } catch (err: any) {
       setError(err.message || "Failed to load keywords");
     } finally {
@@ -201,7 +88,6 @@ export default function DashboardPage() {
   useEffect(() => {
     loadJobs();
     loadKeywords();
-    statsApi.get().then(setStats).catch(() => {});
   }, [loadJobs, loadKeywords]);
 
   useEffect(() => {
@@ -246,10 +132,6 @@ export default function DashboardPage() {
     return `${Math.floor(sec / 60)}m ${sec % 60}s`;
   }
 
-  function intervalLabel(hours: number) {
-    return intervalOptions.find((o) => o.value === hours)?.label ?? `${hours}h`;
-  }
-
   async function handleCrawlNow() {
     setCrawling(true);
     setError("");
@@ -284,20 +166,14 @@ export default function DashboardPage() {
     try {
       const kw = await keywordsApi.create({
         text,
-        url: hasUrl && newUrl.trim() ? newUrl.trim() : undefined,
-        source_type: hasUrl && newUrl.trim() ? newSourceType : "search",
-        group_name: newGroup.trim() || undefined,
-        crawl_interval_hours: 24,
+        source_type: "search",
+        group_name: selectedGroup !== "all" ? selectedGroup : undefined,
       });
       setKeywords((prev) => [...prev, kw]);
-      if (newGroup.trim() && !groups.includes(newGroup.trim())) {
-        setGroups((prev) => [...prev, newGroup.trim()].sort());
+      if (kw.group_name) {
+        setGroups((prev) => Array.from(new Set([...prev, kw.group_name!])).sort());
       }
       setNewText("");
-      setNewUrl("");
-      setHasUrl(false);
-      setNewGroup("");
-      setNewInterval(24);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -323,97 +199,99 @@ export default function DashboardPage() {
   async function handleAddRecommendation(text: string) {
     setAddingRec(text);
     try {
-      const kw = await keywordsApi.create({ text, source_type: "search" });
+      const kw = await keywordsApi.create({
+        text,
+        source_type: "search",
+        group_name: selectedGroup !== "all" ? selectedGroup : undefined,
+      });
       setKeywords((prev) => [...prev, kw]);
+      if (kw.group_name) {
+        setGroups((prev) => Array.from(new Set([...prev, kw.group_name!])).sort());
+      }
       setRecommendations((prev) => prev.filter((r) => r.text !== text));
     } finally {
       setAddingRec(null);
     }
   }
 
-  async function handleExportKeywords() {
-    const data = await keywordsApi.export();
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "keywords.json";
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const text = await file.text();
-      const data = JSON.parse(text) as KeywordExportItem[];
-      const result = await keywordsApi.import(data);
-      setImportMsg(t("kw_import_success", { added: result.added, skipped: result.skipped }));
-      await loadKeywords();
-      setTimeout(() => setImportMsg(""), 4000);
-    } catch {
-      setImportMsg(t("kw_import_error"));
-      setTimeout(() => setImportMsg(""), 3000);
-    } finally {
-      if (importInputRef.current) importInputRef.current.value = "";
-    }
-  }
-
-  async function handleToggleKeyword(kw: Keyword) {
-    const updated = await keywordsApi.update(kw.id, { is_active: !kw.is_active });
-    setKeywords((prev) => prev.map((item) => (item.id === kw.id ? updated : item)));
-  }
-
   async function handleDeleteKeyword(id: string) {
-    if (!confirm(t("kw_delete_confirm"))) return;
     await keywordsApi.delete(id);
     setKeywords((prev) => prev.filter((item) => item.id !== id));
   }
 
-  function startEditKeyword(kw: Keyword) {
-    setEditingId(kw.id);
-    setEditHasUrl(!!kw.url);
-    setEditUrl(kw.url || "");
-    setEditSourceType(kw.source_type === "search" ? "webpage" : kw.source_type);
-    setEditGroup(kw.group_name || "");
-    setEditInterval(24);
-    setEditRequiresJs(kw.requires_js || false);
+  async function handleAddHistoricalKeyword(text: string) {
+    setAddingRec(text);
+    try {
+      const kw = await keywordsApi.create({
+        text,
+        source_type: "search",
+        group_name: selectedGroup !== "all" ? selectedGroup : undefined,
+      });
+      setKeywords((prev) => [...prev, kw]);
+      if (kw.group_name) {
+        setGroups((prev) => Array.from(new Set([...prev, kw.group_name!])).sort());
+      }
+    } finally {
+      setAddingRec(null);
+    }
   }
 
-  async function handleSaveEdit(kw: Keyword) {
-    const url = editHasUrl && editUrl.trim() ? editUrl.trim() : null;
-    const updated = await keywordsApi.update(kw.id, {
-      url: url || undefined,
-      source_type: url ? editSourceType : "search",
-      group_name: editGroup.trim() || undefined,
-      crawl_interval_hours: 24,
-      requires_js: editRequiresJs,
-    });
-    setKeywords((prev) => prev.map((item) => (item.id === kw.id ? updated : item)));
-    setGroups(await keywordsApi.listGroups());
-    setEditingId(null);
+  async function handleCreateGroup() {
+    if (selectedGroup !== "all" || displayedKeywords.length === 0) return;
+    const value = window.prompt(t("kw_group_prompt"))?.trim();
+    if (!value) return;
+    setCreatingGroup(true);
+    setError("");
+    try {
+      const updatedKeywords = await Promise.all(
+        displayedKeywords.map((item) => keywordsApi.update(item.id, { group_name: value }))
+      );
+      const updatedMap = new Map(updatedKeywords.map((item) => [item.id, item]));
+      setKeywords((prev) => prev.map((item) => updatedMap.get(item.id) ?? item));
+      setGroups((prev) => Array.from(new Set([...prev, value])).sort());
+      setSelectedGroup(value);
+    } catch (err: any) {
+      setError(err.message || "创建分组失败");
+    } finally {
+      setCreatingGroup(false);
+    }
   }
 
-  const filteredKeywords = filterGroup !== null
-    ? keywords.filter((k) => (filterGroup === "" ? !k.group_name : k.group_name === filterGroup))
-    : keywords;
-
-  const groupedKeywords: Record<string, Keyword[]> = {};
-  for (const kw of filteredKeywords) {
-    const groupKey = kw.group_name || "";
-    if (!groupedKeywords[groupKey]) groupedKeywords[groupKey] = [];
-    groupedKeywords[groupKey].push(kw);
+  async function handleDeleteGroup(groupName: string) {
+    if (!window.confirm(t("kw_group_delete_confirm", { group: groupName }))) return;
+    setDeletingGroup(groupName);
+    setError("");
+    try {
+      const keywordsInGroup = keywords.filter((item) => item.group_name === groupName);
+      const updatedKeywords = await Promise.all(
+        keywordsInGroup.map((item) => keywordsApi.update(item.id, { group_name: "" }))
+      );
+      const updatedMap = new Map(updatedKeywords.map((item) => [item.id, item]));
+      setKeywords((prev) => prev.map((item) => updatedMap.get(item.id) ?? item));
+      setGroups((prev) => prev.filter((item) => item !== groupName));
+      if (selectedGroup === groupName) {
+        setSelectedGroup("all");
+      }
+    } catch (err: any) {
+      setError(err.message || "删除分组失败");
+    } finally {
+      setDeletingGroup(null);
+    }
   }
-
-  const groupKeys = Object.keys(groupedKeywords).sort((a, b) => {
-    if (a === "") return 1;
-    if (b === "") return -1;
-    return a.localeCompare(b);
-  });
 
   const jobsLoadingState = loadingJobs;
   const keywordsLoadingState = loadingKeywords;
+  const currentKeywordSet = new Set(keywords.map((item) => item.text.toLowerCase()));
+  const recentHistoricalHints = historicalKeywords.filter((item) => {
+    if (!item.latest_crawled_at) return false;
+    const daysAgo = (Date.now() - new Date(item.latest_crawled_at).getTime()) / (1000 * 60 * 60 * 24);
+    return daysAgo <= 30 && !currentKeywordSet.has(item.keyword.toLowerCase());
+  }).slice(0, 12);
+  const availableGroups = useMemo(() => Array.from(new Set(groups)).sort(), [groups]);
+  const displayedKeywords = useMemo(() => {
+    if (selectedGroup === "all") return keywords;
+    return keywords.filter((item) => item.group_name === selectedGroup);
+  }, [keywords, selectedGroup]);
 
   return (
     <div className="mx-auto max-w-7xl p-6">
@@ -425,7 +303,6 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {importMsg && <span className="text-xs text-muted-foreground">{importMsg}</span>}
           <button
             onClick={handleRecommend}
             disabled={recommendLoading}
@@ -433,19 +310,6 @@ export default function DashboardPage() {
           >
             {recommendLoading ? t("kw_recommending") : t("kw_recommend")}
           </button>
-          <button
-            onClick={handleExportKeywords}
-            className="rounded border border-border px-3 py-1.5 text-xs transition-colors hover:bg-muted"
-          >
-            {t("kw_export")}
-          </button>
-          <button
-            onClick={() => importInputRef.current?.click()}
-            className="rounded border border-border px-3 py-1.5 text-xs transition-colors hover:bg-muted"
-          >
-            {t("kw_import")}
-          </button>
-          <input ref={importInputRef} type="file" accept=".json" className="hidden" onChange={handleImportFile} />
           <button
             onClick={handleCrawlNow}
             disabled={crawling || activeKeywords === 0}
@@ -455,23 +319,6 @@ export default function DashboardPage() {
           </button>
         </div>
       </div>
-
-      {stats && (
-        <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-5">
-          {[
-            { label: t("kw_title"), value: `${activeKeywords}/${keywords.length}` },
-            { label: t("dash_stat_crawls"), value: stats.this_month_crawls },
-            { label: t("dash_stat_sources"), value: stats.this_month_sources },
-            { label: t("dash_stat_tokens"), value: stats.this_month_tokens },
-            { label: t("dash_stat_unread"), value: stats.unread_digests },
-          ].map(({ label, value }) => (
-            <div key={label} className="rounded-lg border border-border bg-background px-4 py-3 text-center">
-              <p className="mb-1 text-xs text-muted-foreground">{label}</p>
-              <p className="text-xl font-bold tabular-nums">{value}</p>
-            </div>
-          ))}
-        </div>
-      )}
 
       {digestError && (
         <div className="mb-4 flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
@@ -522,242 +369,129 @@ export default function DashboardPage() {
 
       {error && <div className="mb-4 rounded bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
 
-      <section className="mb-6 space-y-4">
+      <section className="mb-6 grid gap-4 lg:grid-cols-2">
         <div className="rounded-xl border border-border bg-background p-4">
-          <div className="mb-4">
-            <h2 className="text-lg font-semibold">{t("kw_title")}</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t("kw_subtitle", { a: activeKeywords, t: keywords.length })}
-            </p>
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-lg font-semibold">{t("kw_list_title")}</h2>
+            <span className="text-xs text-muted-foreground">{keywords.length}</span>
           </div>
 
-          {groups.length > 0 && (
-            <div className="mb-4 flex flex-wrap gap-1.5">
-              <button
-                onClick={() => setFilterGroup(null)}
-                className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-                  filterGroup === null ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-muted"
-                }`}
-              >
-                {t("all")}
-              </button>
-              {groups.map((group) => (
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setSelectedGroup("all")}
+              className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                selectedGroup === "all" ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-muted"
+              }`}
+            >
+              {t("kw_group_all")}
+            </button>
+            {availableGroups.map((group) => (
+              <div key={group} className="relative inline-flex">
                 <button
-                  key={group}
-                  onClick={() => setFilterGroup(filterGroup === group ? null : group)}
-                  className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-                    filterGroup === group ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-muted"
+                  onClick={() => setSelectedGroup(group)}
+                  className={`rounded-full border px-3 py-1 pr-7 text-xs transition-colors ${
+                    selectedGroup === group ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-muted"
                   }`}
                 >
                   {group}
                 </button>
-              ))}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteGroup(group);
+                  }}
+                  disabled={deletingGroup === group}
+                  aria-label={`${t("delete")} ${group}`}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            {selectedGroup === "all" && (
               <button
-                onClick={() => setFilterGroup("")}
-                className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-                  filterGroup === "" ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-muted"
-                }`}
+                onClick={handleCreateGroup}
+                disabled={creatingGroup || displayedKeywords.length === 0}
+                className="rounded-full border border-primary/40 px-3 py-1 text-xs text-primary transition-colors hover:bg-primary/5"
               >
-                {t("digests_ungrouped")}
+                {creatingGroup ? t("saving") : t("kw_group_generate")}
               </button>
+            )}
+          </div>
+
+          {recentHistoricalHints.length > 0 && (
+            <div className="mb-4">
+              <p className="mb-2 text-xs text-muted-foreground">{t("kw_history_hint_title")}</p>
+              <div className="flex flex-wrap gap-2">
+                {recentHistoricalHints.map((item) => (
+                  <button
+                    key={item.keyword}
+                    onClick={() => handleAddHistoricalKeyword(item.keyword)}
+                    disabled={addingRec === item.keyword}
+                    className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:opacity-50"
+                  >
+                    {addingRec === item.keyword ? t("kw_adding") : item.keyword}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
-          <form onSubmit={handleAddKeyword} className="space-y-3 rounded-lg border border-border bg-muted/20 p-4">
-            <div className="flex gap-2">
+          {keywordsLoadingState ? (
+            <div className="py-12 text-center text-muted-foreground">{t("loading")}</div>
+          ) : keywords.length === 0 ? (
+            <div className="py-12 text-center text-muted-foreground">{t("kw_empty")}</div>
+          ) : displayedKeywords.length === 0 ? (
+            <div className="py-12 text-center text-muted-foreground">{t("kw_group_empty")}</div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {displayedKeywords.map((kw) => (
+                <div
+                  key={kw.id}
+                  className="relative min-w-[160px] max-w-full flex-none rounded-lg border border-border px-3 py-4 pr-8"
+                >
+                  <span className="block min-w-0 truncate text-sm font-medium">{kw.text}</span>
+                  <button
+                    onClick={(e) => {
+                      handleDeleteKeyword(kw.id);
+                    }}
+                    aria-label={`${t("delete")} ${kw.text}`}
+                    className="absolute right-2 top-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-border bg-background p-4">
+          <div className="mb-4">
+            <h2 className="text-lg font-semibold">{t("kw_title")}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {selectedGroup === "all" ? t("kw_subtitle_simple") : t("kw_subtitle_group", { group: selectedGroup })}
+            </p>
+          </div>
+
+          <form onSubmit={handleAddKeyword} className="rounded-lg border border-border bg-muted/20 p-4">
+            <div className="flex flex-col gap-3">
               <input
                 value={newText}
                 onChange={(e) => setNewText(e.target.value)}
-                className="flex-1 rounded-md border border-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                className="w-full rounded-md border border-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 placeholder={t("kw_placeholder")}
                 maxLength={200}
               />
               <button
                 type="submit"
                 disabled={savingKeyword || !newText.trim()}
-                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                className="self-end rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
               >
                 {savingKeyword ? t("kw_adding") : t("kw_add")}
               </button>
             </div>
-
-            <div className="flex flex-wrap gap-3">
-              <div className="flex items-center gap-2">
-                <label className="whitespace-nowrap text-xs text-muted-foreground">{t("kw_group_label")}</label>
-                <input
-                  value={newGroup}
-                  onChange={(e) => setNewGroup(e.target.value)}
-                  list="group-suggestions"
-                  className="w-28 rounded-md border border-input px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-                  placeholder={t("kw_group_placeholder")}
-                />
-              </div>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span>{t("kw_frequency")}</span>
-                <span>{t("kw_daily_once")}</span>
-              </div>
-            </div>
-
-            <datalist id="group-suggestions">
-              {groups.map((group) => <option key={group} value={group} />)}
-            </datalist>
-
-            <label className="flex cursor-pointer items-center gap-2 text-sm select-none">
-              <input type="checkbox" checked={hasUrl} onChange={(e) => setHasUrl(e.target.checked)} className="rounded" />
-              <span className="text-muted-foreground">{t("kw_pin_url")}</span>
-            </label>
-
-            {hasUrl && (
-              <div className="flex gap-2 pl-6">
-                <select
-                  value={newSourceType}
-                  onChange={(e) => setNewSourceType(e.target.value)}
-                  className="rounded-md border border-input px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="webpage">Webpage</option>
-                  <option value="rss">RSS</option>
-                </select>
-                <input
-                  value={newUrl}
-                  onChange={(e) => setNewUrl(e.target.value)}
-                  className="flex-1 rounded-md border border-input px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  placeholder="https://..."
-                />
-              </div>
-            )}
           </form>
-        </div>
-
-        <div className="rounded-xl border border-border bg-background p-4">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-semibold">关键词列表</h2>
-            <span className="text-xs text-muted-foreground">{activeKeywords}/{keywords.length} 已启用</span>
-          </div>
-
-          {keywordsLoadingState ? (
-            <div className="py-12 text-center text-muted-foreground">{t("loading")}</div>
-          ) : keywords.length === 0 ? (
-            <div className="py-12 text-center text-muted-foreground">{t("kw_empty")}</div>
-          ) : (
-            <div className="space-y-4">
-              {groupKeys.map((groupKey) => (
-                <div key={groupKey}>
-                  {groupKey && (
-                    <div className="mb-2 flex items-center gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{groupKey}</span>
-                      <div className="h-px flex-1 bg-border" />
-                    </div>
-                  )}
-                  <div className="space-y-2">
-                    {groupedKeywords[groupKey].map((kw) => (
-                      <div
-                        key={kw.id}
-                        className={`rounded-lg border px-4 py-3 ${kw.is_active ? "border-border" : "border-border opacity-50"}`}
-                      >
-                        {editingId === kw.id ? (
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium">{kw.text}</span>
-                              <span className="text-xs text-muted-foreground">{t("edit")}</span>
-                            </div>
-                            <div className="flex flex-wrap gap-3">
-                              <div className="flex items-center gap-2">
-                                <label className="text-xs text-muted-foreground">{t("kw_group_label")}</label>
-                                <input
-                                  value={editGroup}
-                                  onChange={(e) => setEditGroup(e.target.value)}
-                                  list="group-suggestions"
-                                  className="w-28 rounded-md border border-input px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-                                />
-                              </div>
-                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                <span>{t("kw_frequency")}</span>
-                                <span>{t("kw_daily_once")}</span>
-                              </div>
-                            </div>
-                            <label className="flex cursor-pointer items-center gap-2 text-sm">
-                              <input type="checkbox" checked={editHasUrl} onChange={(e) => setEditHasUrl(e.target.checked)} />
-                              <span className="text-muted-foreground">{t("kw_pin_url")}</span>
-                            </label>
-                            {editHasUrl && (
-                              <div className="flex gap-2 pl-6">
-                                <select
-                                  value={editSourceType}
-                                  onChange={(e) => setEditSourceType(e.target.value)}
-                                  className="rounded-md border border-input px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                                >
-                                  <option value="webpage">Webpage</option>
-                                  <option value="rss">RSS</option>
-                                </select>
-                                <input
-                                  value={editUrl}
-                                  onChange={(e) => setEditUrl(e.target.value)}
-                                  className="flex-1 rounded-md border border-input px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                                  placeholder="https://..."
-                                />
-                              </div>
-                            )}
-                            <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-                              <input type="checkbox" checked={editRequiresJs} onChange={(e) => setEditRequiresJs(e.target.checked)} />
-                              {t("kw_requires_js")}
-                              <span className="opacity-60">({t("kw_requires_js_hint")})</span>
-                            </label>
-                            <div className="flex gap-2">
-                              <button onClick={() => handleSaveEdit(kw)} className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:opacity-90">
-                                {t("save")}
-                              </button>
-                              <button onClick={() => setEditingId(null)} className="rounded border border-border px-3 py-1 text-xs hover:bg-muted">
-                                {t("cancel")}
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="min-w-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-sm font-medium">{kw.text}</span>
-                                {!kw.is_active && (
-                                  <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{t("disabled_label")}</span>
-                                )}
-                              </div>
-                              <div className="mt-0.5 text-xs text-muted-foreground">
-                                {kw.url ? (
-                                  <span className="block max-w-lg truncate">
-                                    {kw.source_type === "rss" ? "RSS · " : "Webpage · "}{kw.url}
-                                  </span>
-                                ) : (
-                                  <span>{t("kw_google_news")}</span>
-                                )}
-                                {kw.last_crawled_at && (
-                                  <span className="ml-2 text-muted-foreground/70">
-                                    {t("kw_last_crawled", { t: new Date(kw.last_crawled_at).toLocaleString() })}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="mt-1.5">
-                                <MiniTrend data={articleStats[kw.text] || []} />
-                              </div>
-                            </div>
-                            <div className="ml-4 flex shrink-0 items-center gap-2">
-                              <button onClick={() => startEditKeyword(kw)} className="rounded border border-border px-2.5 py-1 text-xs hover:bg-muted">
-                                {t("kw_configure")}
-                              </button>
-                              <button onClick={() => handleToggleKeyword(kw)} className="rounded border border-border px-2.5 py-1 text-xs hover:bg-muted">
-                                {kw.is_active ? t("disable") : t("enable")}
-                              </button>
-                              <button onClick={() => handleDeleteKeyword(kw.id)} className="rounded border border-destructive/30 px-2.5 py-1 text-xs text-destructive hover:bg-destructive/10">
-                                {t("delete")}
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </section>
 
@@ -782,8 +516,6 @@ export default function DashboardPage() {
                 const durationStr = active
                   ? `${t("dash_elapsed")} ${dur}`
                   : formatDuration(job.started_at, job.completed_at || job.created_at);
-                const isExpanded = expandedId === job.id;
-                const canPreview = job.status === "completed" || job.status === "failed";
 
                 return (
                   <div key={job.id} className="rounded-lg border border-border px-4 py-3">
@@ -817,22 +549,11 @@ export default function DashboardPage() {
 
                       <div className="flex-1" />
 
-                      {canPreview && (
-                        <button
-                          onClick={() => setExpandedId(isExpanded ? null : job.id)}
-                          className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                        >
-                          {isExpanded ? t("dash_hide_preview") : t("dash_preview")}
-                        </button>
-                      )}
-
                       <div className="shrink-0 text-right">
                         <p className="text-sm text-foreground">{new Date(job.created_at).toLocaleString()}</p>
                         <p className="mt-0.5 text-xs text-muted-foreground">{durationStr}</p>
                       </div>
                     </div>
-
-                    {isExpanded && <ResultsPreview jobId={job.id} />}
                   </div>
                 );
               })}

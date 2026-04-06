@@ -53,6 +53,11 @@ class KeywordHistorySummary(BaseModel):
     total_days: int = 0
 
 
+class KeywordHistorySource(BaseModel):
+    name: str
+    url: str
+
+
 class KeywordHistoryEntry(BaseModel):
     keyword: str
     crawl_date: date
@@ -61,6 +66,7 @@ class KeywordHistoryEntry(BaseModel):
     article_count: int = 0
     digest_id: uuid.UUID | None = None
     title: str | None = None
+    sources: list[KeywordHistorySource] = []
 
 
 class UsageMonthly(BaseModel):
