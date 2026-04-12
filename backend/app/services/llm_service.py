@@ -1,6 +1,36 @@
 from openai import OpenAI
 from app.config import settings
 from app.schemas.llm_config import LlmTestResult
+from app.services.text_service import localize_digest_text, normalize_markdown_source_links
+
+
+def _truncate_keyword_content(raw: str, style: str) -> str:
+    if not raw:
+        return ""
+
+    limit_by_style = {
+        "concise": 2200,
+        "detailed": 3200,
+        "academic": 3600,
+    }
+    limit = limit_by_style.get(style, 2600)
+    if len(raw) <= limit:
+        return raw
+
+    head = int(limit * 0.75)
+    tail = max(0, limit - head - 5)
+    return raw[:head] + "\n...\n" + (raw[-tail:] if tail else "")
+
+
+def _digest_max_tokens(style: str, keyword_count: int) -> int:
+    base_by_style = {
+        "concise": 700,
+        "detailed": 1100,
+        "academic": 1300,
+    }
+    base = base_by_style.get(style, 900)
+    extra = max(0, keyword_count - 1) * 220
+    return min(base + extra, 1800)
 
 
 def _build_client(config) -> OpenAI:
@@ -16,46 +46,54 @@ def generate_digest_sync(
     keywords: list[str],
     crawled_contents: list[dict],  # [{keyword, content}]
     feedback_hint: str | None = None,
+    ui_language: str = "zh",
 ) -> dict:
     """
     Call LLM to generate a structured digest. Returns {title, summary_md, tokens_used}.
     Runs synchronously (called from Celery worker).
     """
     client = _build_client(config)
+    style = getattr(config, "summary_style", "concise") or "concise"
+    digest_max_tokens = _digest_max_tokens(style, len(keywords))
 
     content_parts = []
     for item in crawled_contents:
         kw = item.get("keyword", "其他")
         raw = item.get("content", "")
-        if len(raw) > 6000:
-            text = raw[:4000] + "\n...\n" + raw[-2000:]
-        else:
-            text = raw
+        text = _truncate_keyword_content(raw, style)
         content_parts.append(f"=== 关键词：{kw} ===\n{text}")
 
     combined_content = "\n\n".join(content_parts)
     keywords_str = "、".join(keywords) if keywords else "（未设置关键词）"
 
-    style = getattr(config, "summary_style", "concise") or "concise"
-    style_instruction = {
-        "concise": "请用中文输出，语言简洁准确，每个要点一句话点到为止。",
-        "detailed": "请用中文输出，每个要点展开2-3句详细说明，包含背景、数据和影响分析。",
-        "academic": "请用中文输出，使用正式学术语气，客观陈述事实，引用数据和来源，避免口语表达。",
-    }.get(style, "请用中文输出，语言简洁准确。")
+    if ui_language == "en":
+        style_instruction = {
+            "concise": "Output in English. Keep only the most important 2-4 points per keyword, one short sentence per point.",
+            "detailed": "Output in English. Keep 2-4 key points per keyword, each expanded to at most 2 sentences covering background and impact.",
+            "academic": "Output in English. Keep 2-4 key points per keyword in formal academic tone, concise but evidence-based.",
+        }.get(style, "Output in English. Be concise and accurate.")
+    else:
+        style_instruction = {
+            "concise": "必须用简体中文输出，无论来源是何种语言；所有英文、日文、韩文、繁体中文等非简体内容都必须翻译或转换为简体中文。每个关键词只保留最重要的2-4条要点，每条一句话。",
+            "detailed": "必须用简体中文输出，无论来源是何种语言；所有英文、日文、韩文、繁体中文等非简体内容都必须翻译或转换为简体中文。每个关键词保留2-4条最重要的要点，每条最多2句，覆盖背景和影响。",
+            "academic": "必须用简体中文输出，无论来源是何种语言；所有英文、日文、韩文、繁体中文等非简体内容都必须翻译或转换为简体中文。每个关键词保留2-4条最重要的要点，使用正式学术语气，内容精炼客观。",
+        }.get(style, "必须用简体中文输出，无论来源是何种语言，语言简洁准确。")
 
     default_system_prompt = (
         "你是一个专业的信息助理，负责将用户关注的各类关键词的抓取内容整理成彼此独立的关键词卡片。\n"
         "输出必须严格使用以下 Markdown 结构：\n\n"
         "每个关键词必须单独成段，使用以下格式：\n"
         "## [关键词]\n"
-        "- **[要点标题]**：具体内容说明 ([来源](URL))\n\n"
+        "- **[要点标题]**：具体内容说明 ([网站名](URL))\n\n"
         "重要规则：\n"
         "1. 不要输出任何总总结、总览、跨关键词对比、分组标题或前言\n"
         "2. 每个关键词单独一节，只写与该关键词相关的内容，不要提及其他关键词\n"
-        "3. 每个关键词至少输出 2 条要点；如果信息很少，就如实说明今日新增有限\n"
+        "3. 每个关键词输出 2-4 条最重要的要点；如果信息很少，就如实说明今日新增有限\n"
         "4. 标题顺序尽量与输入关键词顺序一致\n"
-        "5. 每条要点必须在末尾附上原文来源链接 ([来源](URL))，URL取自 'Source: URL' 字段\n"
+        "5. 每条要点必须在末尾附上原文来源链接，格式为 ([网站名](URL))，网站名取自 URL 域名的简短易读缩写（例：reuters.com → Reuters，36kr.com → 36氪，theguardian.com → Guardian，bbc.com → BBC，techcrunch.com → TechCrunch，xinhua.net → 新华网），URL取自 'Source: URL' 字段\n"
         "6. 没有来源链接时省略链接\n"
+        "7. 合并重复信息，优先保留信息增量最高的内容\n"
+        "8. 如果用户界面语言为中文，输出中的标题、正文、小标题都必须是简体中文，不要保留繁体或外语原句；来源链接和 URL 本身保持不变\n"
         f"{style_instruction}"
     )
     system_prompt = (config.prompt_template.strip() if getattr(config, "prompt_template", None) else None) or default_system_prompt
@@ -74,7 +112,7 @@ def generate_digest_sync(
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.3,
-        max_tokens=3000,
+        max_tokens=digest_max_tokens,
         timeout=90,
     )
 
@@ -87,39 +125,16 @@ def generate_digest_sync(
     if lines and lines[0].startswith("#"):
         title = lines[0].lstrip("#").strip()
 
-    # Score importance: quick follow-up call (max 20 tokens)
-    importance_score: float | None = None
-    try:
-        score_response = client.chat.completions.create(
-            model=config.model_name,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        f"以下是一份信息摘要的标题和开头内容，请给它的重要性打分（0.0~1.0），"
-                        f"1.0表示非常重要/紧急，0.0表示普通日常信息。"
-                        f"只输出一个数字，不要其他任何内容。\n\n"
-                        f"标题：{title}\n摘要前200字：{full_text[:200]}"
-                    ),
-                }
-            ],
-            temperature=0.0,
-            max_tokens=10,
-            timeout=15,
-        )
-        score_str = (score_response.choices[0].message.content or "").strip()
-        score_val = float(score_str)
-        if 0.0 <= score_val <= 1.0:
-            importance_score = round(score_val, 2)
-    except Exception:
-        pass  # scoring is optional
+    full_text = localize_digest_text(full_text, ui_language) or full_text
+    full_text = normalize_markdown_source_links(full_text) or full_text
+    title = localize_digest_text(title, ui_language) or title
 
     return {
         "title": title,
         "summary_md": full_text,
         "tokens_used": tokens_used,
         "llm_model": config.model_name,
-        "importance_score": importance_score,
+        "importance_score": None,
     }
 
 

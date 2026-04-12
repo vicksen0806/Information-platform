@@ -42,53 +42,16 @@ def _latest_result_for_keyword(db: Session, user_uuid, keyword_text: str, *, raw
     return db.execute(stmt).scalar_one_or_none()
 
 
-@celery_app.task(name="app.tasks.crawl_tasks.crawl_all_users", bind=True, max_retries=1)
-def crawl_all_users(self):
-    """
-    Runs every 30 minutes. For each active user, checks whether their
-    personal schedule matches the current time (within a 30-minute window).
-    Falls back to the global DAILY_CRAWL_HOUR setting for users without a schedule.
-    """
-    from datetime import datetime, timezone
-    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+@celery_app.task(name="app.tasks.crawl_tasks.crawl_all_users")
+def crawl_all_users():
+    """Enqueue a crawl job for every active user."""
     from app.models.user import User
-    from app.models.user_schedule_config import UserScheduleConfig
-
-    now_utc = datetime.now(timezone.utc)
 
     with _get_session() as db:
         users = db.execute(select(User).where(User.is_active == True)).scalars().all()
 
         for user in users:
-            schedule = db.execute(
-                select(UserScheduleConfig).where(UserScheduleConfig.user_id == user.id)
-            ).scalar_one_or_none()
-
-            if schedule and not schedule.is_active:
-                continue  # User explicitly disabled scheduling
-
-            if schedule:
-                try:
-                    tz = ZoneInfo(schedule.timezone)
-                except ZoneInfoNotFoundError:
-                    tz = ZoneInfo("UTC")
-                now_local = now_utc.astimezone(tz)
-                target_hour = schedule.schedule_hour
-                target_minute = schedule.schedule_minute
-            else:
-                # Default: use global config (UTC)
-                now_local = now_utc
-                target_hour = settings.DAILY_CRAWL_HOUR
-                target_minute = settings.DAILY_CRAWL_MINUTE
-
-            # Trigger if we're within 15 minutes of the scheduled time
-            # Use modular arithmetic to handle midnight rollover correctly
-            current_total = now_local.hour * 60 + now_local.minute
-            target_total = target_hour * 60 + target_minute
-            diff = (current_total - target_total) % (24 * 60)
-            # diff is minutes since target; also check wrap-around (i.e. up to 15min before)
-            if diff <= 15 or diff >= (24 * 60 - 15):
-                run_crawl_job.delay(None, str(user.id), triggered_by="schedule")
+            run_crawl_job.delay(None, str(user.id), triggered_by="admin")
 
 
 @celery_app.task(name="app.tasks.crawl_tasks.run_crawl_job", bind=True, max_retries=2)
@@ -130,6 +93,9 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
         # Mark running
         job.status = "running"
         job.started_at = datetime.now(timezone.utc)
+        job.completed_at = None
+        job.digest_error = None
+        job.summary_expected = False
         db.commit()
 
         # Get active keywords — each keyword is now also the crawl source
@@ -140,6 +106,7 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
         if not keywords:
             job.status = "completed"
             job.completed_at = datetime.now(timezone.utc)
+            job.summary_expected = False
             db.commit()
             return
 
@@ -185,7 +152,12 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
                 crawl_type = kw.source_type
             else:
                 query = urllib.parse.quote(kw.text)
-                crawl_url = f"https://news.google.com/rss/search?q={query}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+                # Use user's language preference: zh → global Chinese edition (TW), en → global English edition (US)
+                if getattr(user, "ui_language", "zh") == "en":
+                    rss_params = "hl=en-US&gl=US&ceid=US:en"
+                else:
+                    rss_params = "hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+                crawl_url = f"https://news.google.com/rss/search?q={query}&{rss_params}"
                 crawl_type = "rss"
 
             content, http_status, error = fetch_url_sync(
@@ -223,8 +195,9 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
             db.flush()
 
         job.status = "completed"
-        job.completed_at = datetime.now(timezone.utc)
         job.new_content_found = has_new_content
+        job.summary_expected = has_digest_input
+        job.completed_at = None if has_digest_input else datetime.now(timezone.utc)
         db.commit()
 
         # Failure alert: check if any active keyword has 3+ consecutive errors
@@ -243,8 +216,7 @@ def _check_and_alert_failures(db, keywords, user_uuid, current_job_id):
     from app.models.crawl_result import CrawlResult
     from app.models.crawl_job import CrawlJob
     from app.models.user_notification_config import UserNotificationConfig
-    from app.models.user_email_config import UserEmailConfig
-    from app.services.notification_service import send_digest_notification, send_email_notification
+    from app.services.notification_service import send_digest_notification
     from datetime import timezone as tz
 
     failing = []
@@ -284,17 +256,5 @@ def _check_and_alert_failures(db, keywords, user_uuid, current_job_id):
     if notif:
         try:
             send_digest_notification(notif, failing, alert_md, ts)
-        except Exception:
-            pass
-
-    email = db.execute(
-        select(UserEmailConfig).where(
-            UserEmailConfig.user_id == user_uuid,
-            UserEmailConfig.is_active == True,
-        )
-    ).scalar_one_or_none()
-    if email:
-        try:
-            send_email_notification(email, failing, alert_md, ts)
         except Exception:
             pass

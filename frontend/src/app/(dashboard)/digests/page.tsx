@@ -9,12 +9,7 @@ import {
   type KeywordHistorySummary,
 } from "@/lib/api";
 import { useT } from "@/lib/i18n";
-
-function normalizeMarkdownLinks(markdown: string): string {
-  return markdown.replace(/(?<!\]\()(?<!\]\()https?:\/\/[^\s)]+/g, (url) => {
-    return `[来源](${url})`;
-  });
-}
+import { normalizeMarkdownLinks } from "@/lib/markdown";
 
 function HistoryCard({ entry }: { entry: KeywordHistoryEntry }) {
   const t = useT();

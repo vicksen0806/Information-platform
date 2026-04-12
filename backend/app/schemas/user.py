@@ -24,6 +24,7 @@ class UserLogin(BaseModel):
 class UserUpdate(BaseModel):
     display_name: str | None = None
     password: str | None = None
+    ui_language: str | None = None
 
     @field_validator("password")
     @classmethod
@@ -40,6 +41,7 @@ class UserResponse(BaseModel):
     is_active: bool
     is_admin: bool
     created_at: datetime
+    ui_language: str = "zh"
 
     model_config = {"from_attributes": True}
 

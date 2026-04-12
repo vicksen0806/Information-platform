@@ -1,7 +1,6 @@
 import uuid
 import re
 from datetime import timezone
-from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func, String, update
@@ -15,6 +14,11 @@ from app.models.digest import Digest
 from app.models.digest_feedback import DigestFeedback
 from app.models.digest_star import DigestStar
 from app.core.dependencies import get_current_user
+from app.services.text_service import (
+    localize_digest_text,
+    normalize_markdown_source_links,
+    source_name_from_url,
+)
 from app.schemas.digest import (
     DigestResponse,
     DigestUpdate,
@@ -132,33 +136,7 @@ def _article_count_from_raw_content(raw_content: str | None) -> int:
 
 
 def _source_name_from_url(url: str) -> str:
-    host = urlparse(url).netloc.lower()
-    if host.startswith("www."):
-        host = host[4:]
-
-    known_names = {
-        "news.google.com": "Google",
-        "google.com": "Google",
-        "linkedin.com": "LinkedIn",
-        "x.com": "X",
-        "twitter.com": "X",
-        "youtube.com": "YouTube",
-        "github.com": "GitHub",
-        "reddit.com": "Reddit",
-        "medium.com": "Medium",
-        "substack.com": "Substack",
-        "techcrunch.com": "TechCrunch",
-        "theverge.com": "The Verge",
-    }
-    if host in known_names:
-        return known_names[host]
-
-    for domain, name in known_names.items():
-        if host.endswith(f".{domain}"):
-            return name
-
-    root = host.split(".")[0] if host else ""
-    return root.capitalize() if root else "来源"
+    return source_name_from_url(url)
 
 
 def _source_name_from_title(title: str | None) -> str | None:
@@ -384,6 +362,17 @@ async def _build_keyword_cards(db: AsyncSession, digest: Digest) -> list[DigestK
     return cards
 
 
+def _localize_keyword_cards(cards: list[DigestKeywordCard], ui_language: str) -> list[DigestKeywordCard]:
+    return [
+        DigestKeywordCard(
+            keyword=card.keyword,
+            summary_md=normalize_markdown_source_links(localize_digest_text(card.summary_md, ui_language) or card.summary_md) or card.summary_md,
+            crawl_date=card.crawl_date,
+        )
+        for card in cards
+    ]
+
+
 @router.get("/keywords", response_model=list[KeywordHistorySummary])
 async def list_keyword_history_summaries(
     current_user: User = Depends(get_current_user),
@@ -476,10 +465,10 @@ async def get_keyword_history(
                 keyword=keyword,
                 crawl_date=day,
                 crawled_at=row.crawled_at,
-                summary_md=body,
+                summary_md=normalize_markdown_source_links(localize_digest_text(body, current_user.ui_language) or body) or body,
                 article_count=_article_count_from_raw_content(row.raw_content),
                 digest_id=row.digest_id,
-                title=row.title,
+                title=localize_digest_text(row.title, current_user.ui_language),
                 sources=_extract_source_links(row.raw_content),
             )
         )
@@ -539,7 +528,7 @@ async def semantic_search(
                 # Re-sort by original cosine order
                 id_order = {digest_id: idx for idx, digest_id in enumerate(ids)}
                 digests = sorted(digests, key=lambda d: id_order.get(d.id, 999))
-                return await _attach_digest_meta(db, digests, current_user.id)
+                return await _attach_digest_meta(db, digests, current_user.id, current_user.ui_language)
         except Exception:
             pass  # Fall through to text search
 
@@ -562,7 +551,7 @@ async def semantic_search(
     )
     result = await db.execute(stmt)
     digests = result.scalars().all()
-    return await _attach_digest_meta(db, digests, current_user.id)
+    return await _attach_digest_meta(db, digests, current_user.id, current_user.ui_language)
 
 
 # ── Timeline ──────────────────────────────────────────────────────────────────
@@ -599,7 +588,7 @@ async def digest_timeline(
         date_str = row.created_at.strftime("%Y-%m-%d")
         grouped[date_str].append({
             "id": str(row.id),
-            "title": row.title,
+            "title": localize_digest_text(row.title, current_user.ui_language),
             "created_at": row.created_at.isoformat(),
             "importance_score": row.importance_score,
             "is_read": row.is_read,
@@ -611,7 +600,7 @@ async def digest_timeline(
     ]
 
 
-async def _attach_digest_meta(db: AsyncSession, digests, user_id) -> list:
+async def _attach_digest_meta(db: AsyncSession, digests, user_id, ui_language: str) -> list:
     """Attach feedback and star info to a list of Digest ORM objects."""
     if not digests:
         return []
@@ -631,7 +620,7 @@ async def _attach_digest_meta(db: AsyncSession, digests, user_id) -> list:
     for d in digests:
         items.append(DigestListItem(
             id=d.id,
-            title=d.title,
+            title=localize_digest_text(d.title, ui_language),
             keywords_used=d.keywords_used,
             sources_count=d.sources_count,
             is_read=d.is_read,
@@ -700,6 +689,7 @@ async def list_digests(
         items = []
         for d in digests:
             item = DigestListItem.model_validate(d)
+            item.title = localize_digest_text(item.title, current_user.ui_language)
             item.feedback = fb_map.get(d.id)
             item.is_starred = d.id in starred_ids
             items.append(item)
@@ -802,9 +792,13 @@ async def get_digest(
     )
     is_starred = star_result.scalar_one_or_none() is not None
     response = DigestResponse.model_validate(digest)
+    response.title = localize_digest_text(response.title, current_user.ui_language)
+    response.summary_md = normalize_markdown_source_links(
+        localize_digest_text(response.summary_md, current_user.ui_language) or response.summary_md
+    )
     response.feedback = fb_row
     response.is_starred = is_starred
-    response.keyword_cards = await _build_keyword_cards(db, digest)
+    response.keyword_cards = _localize_keyword_cards(await _build_keyword_cards(db, digest), current_user.ui_language)
     return response
 
 

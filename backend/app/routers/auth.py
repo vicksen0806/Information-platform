@@ -56,7 +56,7 @@ async def login(request: Request, data: UserLogin, response: Response, db: Async
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(data.password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        raise HTTPException(status_code=401, detail="邮箱或密码错误")
 
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is disabled")
@@ -122,6 +122,8 @@ async def update_me(
         current_user.display_name = data.display_name
     if data.password is not None:
         current_user.hashed_password = hash_password(data.password)
+    if data.ui_language is not None and data.ui_language in ("zh", "en"):
+        current_user.ui_language = data.ui_language
     await db.flush()
     await db.refresh(current_user)
     return current_user

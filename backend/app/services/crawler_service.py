@@ -13,7 +13,6 @@ Key improvements over v1:
 import hashlib
 import time
 import random
-import asyncio
 import threading
 from urllib.parse import urlparse
 
@@ -23,8 +22,6 @@ from urllib3.util.retry import Retry
 import feedparser
 from bs4 import BeautifulSoup
 from readability import Document
-
-from app.schemas.source import SourceTestResult
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -320,20 +317,6 @@ def fetch_url_sync(url: str, source_type: str, requires_js: bool = False) -> tup
         return None, None, f"Connection error: {str(e)[:200]}"
     except Exception as e:
         return None, None, f"Error: {str(e)[:200]}"
-
-
-async def fetch_and_extract(url: str, source_type: str, preview_only: bool = False) -> SourceTestResult:
-    """Async wrapper — runs sync fetch in thread pool."""
-    loop = asyncio.get_event_loop()
-    content, http_status, error = await loop.run_in_executor(
-        None, fetch_url_sync, url, source_type
-    )
-
-    if error:
-        return SourceTestResult(success=False, error=error)
-
-    preview = content[:500] if (content and preview_only) else None
-    return SourceTestResult(success=True, http_status=http_status, content_preview=preview)
 
 
 def compute_content_hash(content: str) -> str:

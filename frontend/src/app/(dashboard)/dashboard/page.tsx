@@ -12,14 +12,25 @@ import {
 } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 
-const DIGEST_TIMEOUT_MS = 90 * 1000;
+const DIGEST_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes — LLM can be slow
+
+function jobStartedAt(job: CrawlJob) {
+  return job.created_at;
+}
+
+function jobServerFinishedAt(job: CrawlJob) {
+  return job.completed_at || job.digest_created_at;
+}
 
 function isGeneratingDigest(job: CrawlJob) {
-  if (job.status !== "completed" || job.has_digest) return false;
-  if (!job.new_content_found) return false;
-  const completedAt = job.completed_at ? new Date(job.completed_at).getTime() : null;
-  if (!completedAt) return false;
-  return Date.now() - completedAt < DIGEST_TIMEOUT_MS;
+  if (job.status !== "completed" || !job.summary_expected || job.has_digest || job.digest_error) {
+    return false;
+  }
+  if (job.completed_at) {
+    return false;
+  }
+  const startedAt = new Date(jobStartedAt(job)).getTime();
+  return Date.now() - startedAt < DIGEST_TIMEOUT_MS;
 }
 
 function isActive(job: CrawlJob) {
@@ -54,13 +65,12 @@ export default function DashboardPage() {
   const [deletingGroup, setDeletingGroup] = useState<string | null>(null);
 
   const hasActive = jobs.some(isActive);
-  const digestError = jobs.find((j) => j.digest_error)?.digest_error ?? null;
+  const digestError = jobs[0]?.digest_error ?? null;
   const activeKeywords = keywords.filter((k) => k.is_active).length;
 
   const loadJobs = useCallback(async () => {
     try {
-      const list = await crawlJobsApi.list();
-      setJobs(list);
+      setJobs(await crawlJobsApi.list());
     } catch (err: any) {
       setError(err.message || "Failed to load jobs");
     } finally {
@@ -92,9 +102,18 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!hasActive) return;
-    const interval = setInterval(loadJobs, 5000);
+    const interval = setInterval(loadJobs, 1000);
     return () => clearInterval(interval);
   }, [hasActive, loadJobs]);
+
+  // Immediately refresh when user returns to this tab
+  useEffect(() => {
+    function onVisible() {
+      if (document.visibilityState === "visible") loadJobs();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [loadJobs]);
 
   useEffect(() => {
     if (!hasActive) return;
@@ -127,7 +146,7 @@ export default function DashboardPage() {
     if (!start) return "";
     const s = new Date(start).getTime();
     const e = live ? Date.now() : (end ? new Date(end).getTime() : new Date(start).getTime());
-    const sec = Math.floor((e - s) / 1000);
+    const sec = Math.max(0, Math.floor((e - s) / 1000));
     if (sec < 60) return `${sec}s`;
     return `${Math.floor(sec / 60)}m ${sec % 60}s`;
   }
@@ -324,7 +343,7 @@ export default function DashboardPage() {
         <div className="mb-4 flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
           <span className="mt-0.5 text-lg leading-none text-destructive">⚠</span>
           <div>
-            <p className="text-sm font-medium text-destructive">{t("dash_api_inactive")}</p>
+            <p className="text-sm font-medium text-destructive">{digestError}</p>
             <p className="mt-0.5 text-xs text-destructive/80">
               {t("dash_api_inactive_sub")}
               <a href="/settings" className="ml-1 underline">{t("dash_go_settings")}</a>
@@ -512,10 +531,12 @@ export default function DashboardPage() {
             <div className="space-y-2">
               {jobs.map((job) => {
                 const active = isActive(job);
-                const dur = formatDuration(job.started_at || job.created_at, null, true);
-                const durationStr = active
-                  ? `${t("dash_elapsed")} ${dur}`
-                  : formatDuration(job.started_at, job.completed_at || job.created_at);
+                const isCrawling = job.status === "pending" || job.status === "running";
+                const serverFinishedAt = jobServerFinishedAt(job);
+                const endTime = serverFinishedAt;
+                const durationStr = (isCrawling || (!job.has_digest && active))
+                  ? `${t("dash_elapsed")} ${formatDuration(jobStartedAt(job), null, true)}`
+                  : `${t("dash_elapsed")} ${formatDuration(jobStartedAt(job), endTime)}`;
 
                 return (
                   <div key={job.id} className="rounded-lg border border-border px-4 py-3">

@@ -15,16 +15,14 @@ class User(Base):
     display_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    ui_language: Mapped[str] = mapped_column(String(10), default="zh", nullable=False, server_default="zh")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
     llm_config: Mapped["UserLlmConfig"] = relationship("UserLlmConfig", back_populates="user", uselist=False)
-    schedule_config: Mapped["UserScheduleConfig"] = relationship("UserScheduleConfig", back_populates="user", uselist=False)
     notification_config: Mapped["UserNotificationConfig"] = relationship("UserNotificationConfig", back_populates="user", uselist=False)
-    email_config: Mapped["UserEmailConfig"] = relationship("UserEmailConfig", back_populates="user", uselist=False)
     notion_config: Mapped["UserNotionConfig"] = relationship("UserNotionConfig", back_populates="user", uselist=False)
-    notification_routes: Mapped[list["NotificationRoute"]] = relationship("NotificationRoute", back_populates="user", cascade="all, delete-orphan")
     sources: Mapped[list["Source"]] = relationship("Source", back_populates="user", cascade="all, delete-orphan")
     keywords: Mapped[list["Keyword"]] = relationship("Keyword", back_populates="user", cascade="all, delete-orphan")
     crawl_jobs: Mapped[list["CrawlJob"]] = relationship("CrawlJob", back_populates="user", cascade="all, delete-orphan")

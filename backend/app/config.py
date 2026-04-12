@@ -25,10 +25,6 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> List[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]
 
-    # Celery Beat — 每日爬取时间（UTC）
-    DAILY_CRAWL_HOUR: int = 1
-    DAILY_CRAWL_MINUTE: int = 0
-
     # 初始管理员
     FIRST_ADMIN_EMAIL: str = "admin@example.com"
     FIRST_ADMIN_PASSWORD: str = "changeme123"
@@ -42,14 +38,8 @@ class Settings(BaseSettings):
     # pgvector: auto-set to True at startup if vector extension is available
     PGVECTOR_ENABLED: bool = False
 
-    # Playwright render service URL (set in docker-compose)
+    # Playwright render service URL
     PLAYWRIGHT_URL: str = "http://playwright:3001"
-
-    # Web Push VAPID keys (generate with: python -c "from pywebpush import webpush; print(webpush.generate_keys())")
-    # Or: npx web-push generate-vapid-keys
-    VAPID_PRIVATE_KEY: str = ""
-    VAPID_PUBLIC_KEY: str = ""
-    VAPID_EMAIL: str = "mailto:admin@example.com"
 
     # Crawler proxy pool: comma-separated proxy URLs, e.g. "http://user:pass@proxy1:8080,http://proxy2:8080"
     # Leave empty to disable proxies

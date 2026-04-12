@@ -1,6 +1,7 @@
 """Celery task for LLM digest generation."""
 import time
 import uuid
+from datetime import datetime, timezone
 
 from celery import shared_task
 from sqlalchemy import create_engine, select
@@ -15,64 +16,6 @@ _engine = create_engine(_sync_db_url, pool_pre_ping=True)
 
 def _get_session() -> Session:
     return Session(_engine)
-
-
-def _send_web_push(db, user_uuid, digest, should_notify: bool):
-    """Send Web Push notification to all subscribed devices for this user."""
-    if not should_notify:
-        return
-    from app.config import settings as _settings
-    if not _settings.VAPID_PRIVATE_KEY or not _settings.VAPID_PUBLIC_KEY:
-        return  # Not configured
-    try:
-        from app.models.push_subscription import PushSubscription
-        from pywebpush import webpush, WebPushException
-        import json
-
-        subs = db.execute(
-            select(PushSubscription).where(PushSubscription.user_id == user_uuid)
-        ).scalars().all()
-
-        if not subs:
-            return
-
-        title = (digest.title or "新摘要") if digest else "新摘要"
-        payload = json.dumps({
-            "title": f"Info Platform: {title}",
-            "body": f"已生成新摘要，点击查看",
-            "url": f"/digests/{digest.id}" if digest else "/digests",
-        })
-
-        dead_endpoints = []
-        for sub in subs:
-            try:
-                webpush(
-                    subscription_info={
-                        "endpoint": sub.endpoint,
-                        "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
-                    },
-                    data=payload,
-                    vapid_private_key=_settings.VAPID_PRIVATE_KEY,
-                    vapid_claims={"sub": _settings.VAPID_EMAIL},
-                )
-            except WebPushException as e:
-                if e.response and e.response.status_code in (404, 410):
-                    dead_endpoints.append(sub.endpoint)
-            except Exception:
-                pass
-
-        # Clean up expired subscriptions
-        for endpoint in dead_endpoints:
-            dead = db.execute(
-                select(PushSubscription).where(PushSubscription.endpoint == endpoint)
-            ).scalar_one_or_none()
-            if dead:
-                db.delete(dead)
-        if dead_endpoints:
-            db.commit()
-    except Exception:
-        pass  # Web Push is optional, never block digest generation
-
 
 def _send_with_retry(send_fn, config, keywords, summary_md, created_at, max_attempts=3):
     """Send notification with exponential backoff retry (30s, 60s)."""
@@ -106,13 +49,32 @@ def generate_digest(self, job_id: str, user_id: str):
     user_uuid = uuid.UUID(user_id)
 
     with _get_session() as db:
+        from app.models.crawl_job import CrawlJob
+
+        def _mark_job_finished(*, digest_error: str | None = None):
+            job = db.execute(
+                select(CrawlJob).where(CrawlJob.id == job_uuid)
+            ).scalar_one_or_none()
+            if not job:
+                return
+            job.completed_at = job.completed_at or datetime.now(timezone.utc)
+            if digest_error is not None:
+                job.digest_error = digest_error
+            db.commit()
+
+        # Load user language preference
+        from app.models.user import User
+        user = db.execute(select(User).where(User.id == user_uuid)).scalar_one_or_none()
+        ui_language = getattr(user, "ui_language", "zh") if user else "zh"
+
         # Load LLM config
         llm_config = db.execute(
             select(UserLlmConfig).where(UserLlmConfig.user_id == user_uuid)
         ).scalar_one_or_none()
 
         if not llm_config:
-            return  # User hasn't configured LLM — skip silently
+            _mark_job_finished(digest_error="未配置 LLM，请在系统设置中填写 API Key")
+            return
 
         # Load crawl results with actual content
         rows = db.execute(
@@ -124,6 +86,7 @@ def generate_digest(self, job_id: str, user_id: str):
         ).scalars().all()
 
         if not rows:
+            _mark_job_finished()
             return  # Nothing to summarize
 
         # Load active keywords (for group mapping and prompt context)
@@ -175,18 +138,12 @@ def generate_digest(self, job_id: str, user_id: str):
 
         # Call LLM
         try:
-            result = generate_digest_sync(llm_config, keyword_texts, crawled_contents, feedback_hint=feedback_hint)
+            result = generate_digest_sync(llm_config, keyword_texts, crawled_contents, feedback_hint=feedback_hint, ui_language=ui_language)
         except Exception as exc:
             from openai import AuthenticationError as OpenAIAuthError, RateLimitError as OpenAIRateLimitError
-            from app.models.crawl_job import CrawlJob
 
             def _write_digest_error(msg: str):
-                job = db.execute(
-                    select(CrawlJob).where(CrawlJob.id == job_uuid)
-                ).scalar_one_or_none()
-                if job:
-                    job.digest_error = msg
-                    db.commit()
+                _mark_job_finished(digest_error=msg)
 
             if isinstance(exc, OpenAIAuthError):
                 # API Key invalid — record error and stop immediately, do not retry
@@ -233,12 +190,21 @@ def generate_digest(self, job_id: str, user_id: str):
             db.add(digest)
 
         db.commit()
+        final_digest = existing_digest if existing_digest else digest
+        db.refresh(final_digest)
+
+        job = db.execute(
+            select(CrawlJob).where(CrawlJob.id == job_uuid)
+        ).scalar_one_or_none()
+        if job:
+            job.completed_at = datetime.now(timezone.utc)
+            job.digest_error = None
+            db.commit()
 
         # Generate and store embedding via raw SQL (optional — skip silently on failure)
         try:
             from app.services.llm_service import generate_embedding_sync
             from app.config import settings as _s
-            final_digest = existing_digest if existing_digest else digest
             if getattr(llm_config, "embedding_model", None) and final_digest and getattr(_s, "PGVECTOR_ENABLED", False):
                 embed_text = f"{final_digest.title or ''}\n{(final_digest.summary_md or '')[:2000]}"
                 vec = generate_embedding_sync(llm_config, embed_text)
@@ -266,51 +232,12 @@ def generate_digest(self, job_id: str, user_id: str):
             )
         ).scalar_one_or_none()
 
-        from datetime import datetime, timezone as tz
-        created_str = datetime.now(tz.utc).strftime("%Y-%m-%d %H:%M UTC")
+        created_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         final_digest = existing_digest if existing_digest else digest
         final_summary = (final_digest.summary_md if final_digest else "") or ""
 
-        from app.services.notification_service import send_digest_notification, send_email_notification
+        from app.services.notification_service import send_digest_notification
 
         # Global webhook (with simple retry)
         if notif_config and should_notify:
             _send_with_retry(send_digest_notification, notif_config, keyword_texts, final_summary, created_str)
-
-        # Per-group webhook routing
-        from app.models.notification_route import NotificationRoute
-        routes = db.execute(
-            select(NotificationRoute).where(
-                NotificationRoute.user_id == user_uuid,
-                NotificationRoute.is_active == True,
-            )
-        ).scalars().all()
-
-        if routes:
-            # Build per-group raw content for routing
-            group_content_map: dict[str | None, list[str]] = {}
-            for item in crawled_contents:
-                g = item.get("group")
-                group_content_map.setdefault(g, []).append(
-                    f"**{item['keyword']}**:\n{item['content'][:1500]}"
-                )
-            for route in routes:
-                group_kws = [item["keyword"] for item in crawled_contents if item.get("group") == route.group_name]
-                if group_kws and route.group_name in group_content_map or route.group_name is None and None in group_content_map:
-                    route_content = "\n\n".join(group_content_map.get(route.group_name, []))
-                    _send_with_retry(send_digest_notification, route, group_kws or keyword_texts, route_content, created_str)
-
-        # Email notification (with simple retry)
-        from app.models.user_email_config import UserEmailConfig
-        email_config = db.execute(
-            select(UserEmailConfig).where(
-                UserEmailConfig.user_id == user_uuid,
-                UserEmailConfig.is_active == True,
-            )
-        ).scalar_one_or_none()
-
-        if email_config and should_notify:
-            _send_with_retry(send_email_notification, email_config, keyword_texts, final_summary, created_str)
-
-        # Web Push notifications
-        _send_web_push(db, user_uuid, final_digest, should_notify)

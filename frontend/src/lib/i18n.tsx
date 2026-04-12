@@ -14,6 +14,7 @@ export const translations = {
   save: { zh: "保存", en: "Save" },
   all: { zh: "全部", en: "All" },
   enable: { zh: "启用", en: "Enable" },
+  forbid: { zh: "禁止", en: "Disable" },
   disable: { zh: "禁用", en: "Disable" },
   edit: { zh: "编辑", en: "Edit" },
   test: { zh: "测试", en: "Test" },
@@ -66,7 +67,7 @@ export const translations = {
   dash_status_no_new: { zh: "无新内容", en: "No new content" },
   dash_view_digest: { zh: "查看摘要", en: "View digest" },
   dash_api_inactive: { zh: "API Key 已失效 — 摘要生成已暂停", en: "API Key is inactive — digest generation paused" },
-  dash_api_inactive_sub: { zh: "请在设置页面更新 API Key 以恢复。", en: "Update your API Key to resume." },
+  dash_api_inactive_sub: { zh: "修复后重新抓取即可自动消除此提示。", en: "Run a new crawl after fixing to dismiss this notice." },
   dash_go_settings: { zh: "前往设置", en: "Go to Settings" },
   dash_empty_title: { zh: "暂无抓取任务", en: "No crawl jobs yet" },
   dash_empty_sub: { zh: "添加关键词后点击「立即抓取」开始", en: 'Add keywords then click "Crawl now" to start' },
@@ -175,8 +176,6 @@ export const translations = {
   settings_base_url: { zh: "自定义 Base URL（可选）", en: "Custom Base URL (optional)" },
   settings_test_conn: { zh: "测试连接", en: "Test connection" },
   settings_testing: { zh: "测试中…", en: "Testing..." },
-  settings_schedule_title: { zh: "定时调度", en: "Daily Schedule" },
-  settings_schedule_sub: { zh: "设置每日自动抓取时间", en: "Set the time for automatic daily crawl" },
   settings_crawl_rules_title: { zh: "抓取规则", en: "Crawl Rules" },
   settings_crawl_rules_sub: { zh: "统一查看系统当前使用的抓取频率与来源策略", en: "View the system-wide crawl frequency and source strategy" },
   settings_crawl_frequency_title: { zh: "抓取频率", en: "Crawl Frequency" },
@@ -185,8 +184,6 @@ export const translations = {
   settings_hour: { zh: "时", en: "Hour" },
   settings_minute: { zh: "分", en: "Minute" },
   settings_timezone: { zh: "时区", en: "Timezone" },
-  settings_enable_schedule: { zh: "启用每日自动抓取", en: "Enable automatic daily crawl" },
-  settings_save_schedule: { zh: "保存调度", en: "Save schedule" },
   settings_notif_title: { zh: "推送通知", en: "Push Notifications" },
   settings_notif_sub: { zh: "新摘要生成后通过 Webhook 发送通知", en: "Send a webhook message when a new digest is ready" },
   settings_platform: { zh: "平台", en: "Platform" },
@@ -268,26 +265,6 @@ export const translations = {
   digest_feedback_positive: { zh: "有用", en: "Helpful" },
   digest_feedback_negative: { zh: "没用", en: "Not helpful" },
 
-  // Settings – Email
-  settings_email_title: { zh: "Email 通知", en: "Email Notifications" },
-  settings_email_sub: { zh: "新摘要生成后发送邮件通知", en: "Send email when a new digest is ready" },
-  settings_smtp_host: { zh: "SMTP 服务器", en: "SMTP Host" },
-  settings_smtp_port: { zh: "端口", en: "Port" },
-  settings_smtp_user: { zh: "登录账号", en: "Username" },
-  settings_smtp_password: { zh: "密码", en: "Password" },
-  settings_smtp_password_keep: { zh: "留空保持现有密码", en: "Leave blank to keep existing password" },
-  settings_smtp_from: { zh: "发件人地址", en: "From address" },
-  settings_smtp_to: { zh: "收件人地址（多个用逗号分隔）", en: "Recipient(s) — comma-separated" },
-  settings_email_active: { zh: "启用邮件通知", en: "Enable email notifications" },
-  settings_email_current: { zh: "当前：{host}:{port} → {to}", en: "Current: {host}:{port} → {to}" },
-  settings_remove_email_confirm: { zh: "移除邮件通知配置？", en: "Remove email notification config?" },
-
-  // Settings – next crawl
-  settings_next_crawl: { zh: "下次抓取", en: "Next crawl" },
-  settings_next_crawl_at: { zh: "将于 {time} 执行", en: "Scheduled for {time}" },
-  settings_next_crawl_in: { zh: "（{h}h {m}m 后）", en: "（in {h}h {m}m）" },
-  settings_schedule_disabled: { zh: "自动调度已禁用", en: "Auto-schedule disabled" },
-
   // Digest starring & mark-all-read
   digest_star: { zh: "收藏", en: "Star" },
   digest_unstar: { zh: "取消收藏", en: "Unstar" },
@@ -299,32 +276,6 @@ export const translations = {
   kw_import: { zh: "导入 JSON", en: "Import JSON" },
   kw_import_success: { zh: "导入完成：新增 {added}，跳过 {skipped}", en: "Import done: {added} added, {skipped} skipped" },
   kw_import_error: { zh: "导入失败", en: "Import failed" },
-
-  // Settings – RSS feed
-  settings_rss_title: { zh: "RSS 订阅", en: "RSS Feed" },
-  settings_rss_sub: { zh: "使用任意 RSS 阅读器订阅你的每日摘要", en: "Subscribe to your digests in any RSS reader" },
-  settings_rss_copy: { zh: "复制 URL", en: "Copy URL" },
-  settings_rss_copied: { zh: "已复制！", en: "Copied!" },
-  settings_rss_loading: { zh: "生成中…", en: "Generating..." },
-
-  // Settings – notification routes
-  settings_routes_title: { zh: "分组路由", en: "Group Routing" },
-  settings_routes_sub: { zh: "将特定分组的内容推送到独立 Webhook", en: "Route specific keyword groups to separate webhooks" },
-  settings_routes_add: { zh: "添加路由", en: "Add route" },
-  settings_routes_group: { zh: "分组名（留空=未分组）", en: "Group name (blank = ungrouped)" },
-  settings_routes_empty: { zh: "暂无路由配置", en: "No routes configured" },
-  settings_routes_delete_confirm: { zh: "删除这条路由？", en: "Delete this route?" },
-
-  // Web Push
-  settings_push_title: { zh: "移动端推送（Web Push）", en: "Web Push Notifications" },
-  settings_push_sub: { zh: "在此设备上接收浏览器推送通知（需要 HTTPS）", en: "Receive push notifications on this device (requires HTTPS)" },
-  settings_push_enable: { zh: "启用推送通知", en: "Enable push notifications" },
-  settings_push_disable: { zh: "关闭推送通知", en: "Disable push notifications" },
-  settings_push_enabling: { zh: "启用中…", en: "Enabling..." },
-  settings_push_enabled: { zh: "推送已启用", en: "Push enabled" },
-  settings_push_denied: { zh: "通知权限被拒绝，请在浏览器设置中允许", en: "Permission denied — allow notifications in browser settings" },
-  settings_push_unsupported: { zh: "此浏览器不支持推送通知", en: "Push notifications not supported in this browser" },
-  settings_push_not_configured: { zh: "服务器未配置 VAPID 密钥，暂不支持 Web Push", en: "Server VAPID keys not configured — Web Push unavailable" },
 
   // Export
   digest_export_obsidian: { zh: "导出到 Obsidian", en: "Open in Obsidian" },
@@ -412,9 +363,29 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     setLang((prev) => {
       const next = prev === "zh" ? "en" : "zh";
       localStorage.setItem("lang", next);
+      // Sync to backend so crawl tasks use the correct language
+      fetch("/api/v1/auth/me", {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ui_language: next }),
+      }).catch(() => {});
       return next;
     });
   }
+
+  useEffect(() => {
+    // On first load, also read ui_language from backend profile (authoritative)
+    fetch("/api/v1/auth/me", { credentials: "include" })
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data?.ui_language === "en" || data?.ui_language === "zh") {
+          setLang(data.ui_language);
+          localStorage.setItem("lang", data.ui_language);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   return <LangContext.Provider value={{ lang, toggle }}>{children}</LangContext.Provider>;
 }

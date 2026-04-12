@@ -3,12 +3,13 @@ const API_BASE = "/api/v1";
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
+    cache: "no-store",
     headers: { "Content-Type": "application/json", ...options.headers },
     ...options,
   });
 
   if (!res.ok) {
-    if (res.status === 401) {
+    if (res.status === 401 && !window.location.pathname.includes("/login")) {
       window.location.href = "/login";
       throw new Error("Unauthorized");
     }
@@ -43,17 +44,6 @@ export const authApi = {
     request<User>("/auth/me", { method: "PATCH", body: JSON.stringify(data) }),
 };
 
-// ── Sources ───────────────────────────────────────────────────────────────────
-export const sourcesApi = {
-  list: () => request<Source[]>("/sources"),
-  create: (data: { name: string; url?: string; search_query?: string; source_type: string }) =>
-    request<Source>("/sources", { method: "POST", body: JSON.stringify(data) }),
-  update: (id: string, data: Partial<Source>) =>
-    request<Source>(`/sources/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  delete: (id: string) => request(`/sources/${id}`, { method: "DELETE" }),
-  test: (id: string) => request<SourceTestResult>(`/sources/${id}/test`, { method: "POST" }),
-};
-
 // ── Keywords ──────────────────────────────────────────────────────────────────
 export const keywordsApi = {
   list: (group?: string) =>
@@ -73,7 +63,7 @@ export const keywordsApi = {
 
 // ── Crawl Jobs ────────────────────────────────────────────────────────────────
 export const crawlJobsApi = {
-  list: (limit = 20, offset = 0) => request<CrawlJob[]>(`/crawl-jobs?limit=${limit}&offset=${offset}`),
+  list: (limit = 20, offset = 0) => request<CrawlJob[]>(`/crawl-jobs?limit=${limit}&offset=${offset}&_t=${Date.now()}`),
   trigger: () => request<CrawlJob>("/crawl-jobs", { method: "POST" }),
   retry: (id: string) => request<CrawlJob>(`/crawl-jobs/${id}/retry`, { method: "POST" }),
   get: (id: string) => request<CrawlJob>(`/crawl-jobs/${id}`),
@@ -127,42 +117,16 @@ export const settingsApi = {
   deleteLlm: () => request("/settings/llm", { method: "DELETE" }),
   testLlm: () => request<{ success: boolean; message: string }>("/settings/llm/test", { method: "POST" }),
 
-  getSchedule: () => request<ScheduleConfig>("/settings/schedule"),
-  upsertSchedule: (data: ScheduleConfig) =>
-    request<ScheduleConfig>("/settings/schedule", { method: "PUT", body: JSON.stringify(data) }),
-  getNextCrawl: () => request<NextCrawlInfo>("/settings/schedule/next-crawl"),
-
   getNotification: () => request<NotificationConfig>("/settings/notification"),
   upsertNotification: (data: { webhook_type: string; webhook_url: string; is_active: boolean }) =>
     request<NotificationConfig>("/settings/notification", { method: "PUT", body: JSON.stringify(data) }),
   deleteNotification: () => request("/settings/notification", { method: "DELETE" }),
   testNotification: () => request<{ success: boolean; message: string }>("/settings/notification/test", { method: "POST" }),
-
-  getEmail: () => request<EmailConfig>("/settings/email"),
-  upsertEmail: (data: { smtp_host: string; smtp_port: number; smtp_user: string; smtp_password?: string; smtp_from: string; smtp_to: string; is_active: boolean }) =>
-    request<EmailConfig>("/settings/email", { method: "PUT", body: JSON.stringify(data) }),
-  deleteEmail: () => request("/settings/email", { method: "DELETE" }),
-  testEmail: () => request<{ success: boolean; message: string }>("/settings/email/test", { method: "POST" }),
-
-  getFeedToken: () => request<FeedTokenInfo>("/settings/feed-token"),
-
-  getNotificationRoutes: () => request<NotificationRoute[]>("/settings/notification-routes"),
-  createNotificationRoute: (data: { group_name?: string | null; webhook_type: string; webhook_url: string; is_active: boolean }) =>
-    request<NotificationRoute>("/settings/notification-routes", { method: "POST", body: JSON.stringify(data) }),
-  deleteNotificationRoute: (id: string) => request(`/settings/notification-routes/${id}`, { method: "DELETE" }),
 };
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 export const statsApi = {
   get: () => request<Stats>("/stats"),
-};
-
-// ── Push ──────────────────────────────────────────────────────────────────────
-export const pushApi = {
-  getVapidKey: () => request<{ vapid_public_key: string }>("/push/vapid-public-key"),
-  subscribe: (data: { endpoint: string; p256dh: string; auth: string }) =>
-    request("/push/subscribe", { method: "POST", body: JSON.stringify(data) }),
-  unsubscribeAll: () => request("/push/unsubscribe-all", { method: "DELETE" }),
 };
 
 // ── Export ────────────────────────────────────────────────────────────────────
@@ -202,25 +166,6 @@ export interface User {
   created_at: string;
 }
 
-export interface Source {
-  id: string;
-  name: string;
-  url: string;
-  search_query: string | null;
-  source_type: string;
-  is_active: boolean;
-  crawl_interval_hours: number;
-  last_crawled_at: string | null;
-  created_at: string;
-}
-
-export interface SourceTestResult {
-  success: boolean;
-  http_status: number | null;
-  content_preview: string | null;
-  error: string | null;
-}
-
 export interface Keyword {
   id: string;
   text: string;
@@ -244,7 +189,9 @@ export interface CrawlJob {
   created_at: string;
   has_digest: boolean;
   digest_id: string | null;
+  digest_created_at: string | null;
   new_content_found: boolean;
+  summary_expected: boolean;
   digest_error: string | null;
 }
 
@@ -334,13 +281,6 @@ export interface KeywordRecommendation {
   reason: string;
 }
 
-export interface ScheduleConfig {
-  schedule_hour: number;
-  schedule_minute: number;
-  timezone: string;
-  is_active: boolean;
-}
-
 export interface NotificationConfig {
   webhook_type: string;
   webhook_url: string;
@@ -367,37 +307,6 @@ export interface Stats {
   this_month_sources: number;
   this_month_tokens: number;
   unread_digests: number;
-}
-
-export interface EmailConfig {
-  smtp_host: string;
-  smtp_port: number;
-  smtp_user: string;
-  smtp_from: string;
-  smtp_to: string;
-  is_active: boolean;
-}
-
-export interface NextCrawlInfo {
-  is_active: boolean;
-  next_crawl_at: string | null;
-  seconds_until: number | null;
-  schedule_time: string | null;
-  timezone: string | null;
-}
-
-export interface FeedTokenInfo {
-  feed_token: string;
-  feed_url: string;
-}
-
-export interface NotificationRoute {
-  id: string;
-  group_name: string | null;
-  webhook_type: string;
-  webhook_url_masked: string;
-  is_active: boolean;
-  created_at: string;
 }
 
 export interface NotionConfig {

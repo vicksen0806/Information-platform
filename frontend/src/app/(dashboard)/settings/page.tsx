@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-import { settingsApi, digestsApi, authApi, type LlmConfig, type User, type NotificationConfig, type UsageStats, type EmailConfig } from "@/lib/api";
+import { settingsApi, digestsApi, authApi, type LlmConfig, type User, type NotificationConfig, type UsageStats } from "@/lib/api";
 import { useLang, useT } from "@/lib/i18n";
 
 const PROVIDERS = [
@@ -43,14 +43,6 @@ export default function SettingsPage() {
   const [notifError, setNotifError] = useState("");
   const [notifTestResult, setNotifTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
-  const [emailConfig, setEmailConfig] = useState<EmailConfig | null>(null);
-  const [emailForm, setEmailForm] = useState({ smtp_host: "", smtp_port: 465, smtp_user: "", smtp_password: "", smtp_from: "", smtp_to: "", is_active: true });
-  const [savingEmail, setSavingEmail] = useState(false);
-  const [testingEmail, setTestingEmail] = useState(false);
-  const [emailSuccess, setEmailSuccess] = useState("");
-  const [emailError, setEmailError] = useState("");
-  const [emailTestResult, setEmailTestResult] = useState<{ success: boolean; message: string } | null>(null);
-
   useEffect(() => {
     authApi.me().then(setUser);
     digestsApi.usage().then(setUsage).catch(() => {});
@@ -62,10 +54,6 @@ export default function SettingsPage() {
     settingsApi.getNotification().then((c) => {
       setNotifConfig(c);
       setNotifForm({ webhook_type: c.webhook_type, webhook_url: "", is_active: c.is_active });
-    }).catch(() => {});
-    settingsApi.getEmail().then((c) => {
-      setEmailConfig(c);
-      setEmailForm((prev) => ({ ...prev, smtp_host: c.smtp_host, smtp_port: c.smtp_port, smtp_user: c.smtp_user, smtp_from: c.smtp_from, smtp_to: c.smtp_to, is_active: c.is_active }));
     }).catch(() => {});
   }, []);
 
@@ -115,40 +103,6 @@ export default function SettingsPage() {
     await settingsApi.deleteNotification();
     setNotifConfig(null);
     setNotifForm({ webhook_type: "feishu", webhook_url: "", is_active: true });
-  }
-
-  async function handleSaveEmail(e: React.FormEvent) {
-    e.preventDefault();
-    setEmailError(""); setEmailSuccess(""); setSavingEmail(true);
-    try {
-      const config = await settingsApi.upsertEmail({
-        smtp_host: emailForm.smtp_host,
-        smtp_port: emailForm.smtp_port,
-        smtp_user: emailForm.smtp_user,
-        smtp_password: emailForm.smtp_password || undefined,
-        smtp_from: emailForm.smtp_from,
-        smtp_to: emailForm.smtp_to,
-        is_active: emailForm.is_active,
-      });
-      setEmailConfig(config);
-      setEmailForm((prev) => ({ ...prev, smtp_password: "" }));
-      setEmailSuccess(t("settings_saved"));
-    } catch (err: any) { setEmailError(err.message); }
-    finally { setSavingEmail(false); }
-  }
-
-  async function handleTestEmail() {
-    setTestingEmail(true); setEmailTestResult(null);
-    try { setEmailTestResult(await settingsApi.testEmail()); }
-    catch (err: any) { setEmailTestResult({ success: false, message: err.message }); }
-    finally { setTestingEmail(false); }
-  }
-
-  async function handleDeleteEmail() {
-    if (!confirm(t("settings_remove_email_confirm"))) return;
-    await settingsApi.deleteEmail();
-    setEmailConfig(null);
-    setEmailForm({ smtp_host: "", smtp_port: 465, smtp_user: "", smtp_password: "", smtp_from: "", smtp_to: "", is_active: true });
   }
 
   return (
@@ -292,10 +246,33 @@ export default function SettingsPage() {
               <p className="text-xs text-muted-foreground mt-1">{t("settings_telegram_hint")}</p>
             )}
           </div>
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
-            <input type="checkbox" checked={notifForm.is_active} onChange={(e) => setNotifForm({ ...notifForm, is_active: e.target.checked })} className="rounded" />
-            <span>{t("settings_enable_notif")}</span>
-          </label>
+          <div>
+            <div className="mb-1 text-sm font-medium">{t("settings_enable_notif")}</div>
+            <div className="inline-flex rounded-md border border-input bg-muted/30 p-1">
+              <button
+                type="button"
+                onClick={() => setNotifForm({ ...notifForm, is_active: true })}
+                className={`rounded px-4 py-2 text-sm font-medium transition-colors ${
+                  notifForm.is_active
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                {t("enable")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setNotifForm({ ...notifForm, is_active: false })}
+                className={`rounded px-4 py-2 text-sm font-medium transition-colors ${
+                  !notifForm.is_active
+                    ? "bg-destructive text-destructive-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                {t("forbid")}
+              </button>
+            </div>
+          </div>
           <div className="flex gap-2 pt-1">
             <button type="submit" disabled={savingNotif} className="px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:opacity-90 disabled:opacity-50">
               {savingNotif ? t("saving") : t("save")}
@@ -315,74 +292,6 @@ export default function SettingsPage() {
         {notifTestResult && (
           <div className={`mt-3 p-3 text-sm rounded ${notifTestResult.success ? "bg-green-50 text-green-800" : "bg-destructive/10 text-destructive"}`}>
             {notifTestResult.success ? "✓ " : "✗ "}{notifTestResult.message}
-          </div>
-        )}
-      </section>
-
-      {/* ── Email ── */}
-      <section className="bg-background border border-border rounded-lg p-5">
-        <h2 className="font-semibold mb-1">{t("settings_email_title")}</h2>
-        <p className="text-sm text-muted-foreground mb-4">{t("settings_email_sub")}</p>
-        {emailError && <div className="mb-3 px-3 py-2 text-sm text-destructive bg-destructive/10 rounded">{emailError}</div>}
-        {emailSuccess && <div className="mb-3 px-3 py-2 text-sm text-green-700 bg-green-50 rounded">{emailSuccess}</div>}
-        {emailConfig && (
-          <div className="mb-4 p-3 bg-muted rounded text-sm">
-            {t("settings_email_current", { host: emailConfig.smtp_host, port: String(emailConfig.smtp_port), to: emailConfig.smtp_to })}
-            {" · "}{emailConfig.is_active ? t("active") : t("disabled_label")}
-          </div>
-        )}
-        <form onSubmit={handleSaveEmail} className="space-y-3">
-          <div className="grid grid-cols-3 gap-3">
-            <div className="col-span-2">
-              <label className="block text-sm font-medium mb-1">{t("settings_smtp_host")}</label>
-              <input required value={emailForm.smtp_host} onChange={(e) => setEmailForm({ ...emailForm, smtp_host: e.target.value })} className="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring" placeholder="smtp.example.com" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">{t("settings_smtp_port")}</label>
-              <input required type="number" value={emailForm.smtp_port} onChange={(e) => setEmailForm({ ...emailForm, smtp_port: Number(e.target.value) })} className="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium mb-1">{t("settings_smtp_user")}</label>
-              <input required value={emailForm.smtp_user} onChange={(e) => setEmailForm({ ...emailForm, smtp_user: e.target.value })} className="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">{t("settings_smtp_password")}</label>
-              <input type="password" value={emailForm.smtp_password} onChange={(e) => setEmailForm({ ...emailForm, smtp_password: e.target.value })} className="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring" placeholder={emailConfig ? t("settings_smtp_password_keep") : ""} />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">{t("settings_smtp_from")}</label>
-            <input required value={emailForm.smtp_from} onChange={(e) => setEmailForm({ ...emailForm, smtp_from: e.target.value })} className="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring" placeholder="noreply@example.com" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">{t("settings_smtp_to")}</label>
-            <input required value={emailForm.smtp_to} onChange={(e) => setEmailForm({ ...emailForm, smtp_to: e.target.value })} className="w-full px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring" placeholder="you@example.com" />
-          </div>
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
-            <input type="checkbox" checked={emailForm.is_active} onChange={(e) => setEmailForm({ ...emailForm, is_active: e.target.checked })} className="rounded" />
-            <span>{t("settings_email_active")}</span>
-          </label>
-          <div className="flex gap-2 pt-1">
-            <button type="submit" disabled={savingEmail} className="px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:opacity-90 disabled:opacity-50">
-              {savingEmail ? t("saving") : t("save")}
-            </button>
-            {emailConfig && (
-              <button type="button" onClick={handleTestEmail} disabled={testingEmail} className="px-4 py-2 border border-border text-sm font-medium rounded-md hover:bg-muted disabled:opacity-50">
-                {testingEmail ? t("settings_sending") : t("settings_send_test")}
-              </button>
-            )}
-            {emailConfig && (
-              <button type="button" onClick={handleDeleteEmail} className="px-4 py-2 text-sm text-destructive border border-destructive/30 rounded-md hover:bg-destructive/10">
-                {t("settings_remove")}
-              </button>
-            )}
-          </div>
-        </form>
-        {emailTestResult && (
-          <div className={`mt-3 p-3 text-sm rounded ${emailTestResult.success ? "bg-green-50 text-green-800" : "bg-destructive/10 text-destructive"}`}>
-            {emailTestResult.success ? "✓ " : "✗ "}{emailTestResult.message}
           </div>
         )}
       </section>

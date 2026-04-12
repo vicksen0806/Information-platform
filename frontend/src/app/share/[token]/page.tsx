@@ -5,12 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { publicApi, type Digest } from "@/lib/api";
 import { useT } from "@/lib/i18n";
-
-function normalizeMarkdownLinks(markdown: string): string {
-  return markdown.replace(/(?<!\]\()(?<!\]\()https?:\/\/[^\s)]+/g, (url) => {
-    return `[来源](${url})`;
-  });
-}
+import { normalizeMarkdownLinks } from "@/lib/markdown";
 
 function SharedKeywordCard({ keyword, summaryMd, crawlDate }: { keyword: string; summaryMd: string; crawlDate: string | null }) {
   const normalizedMarkdown = normalizeMarkdownLinks(summaryMd);

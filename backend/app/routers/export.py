@@ -12,6 +12,7 @@ from app.models.digest import Digest
 from app.models.user_notion_config import UserNotionConfig
 from app.core.dependencies import get_current_user
 from app.core.security import encrypt_api_key, decrypt_api_key, mask_api_key
+from app.services.text_service import normalize_markdown_source_links
 
 router = APIRouter(tags=["export"])
 
@@ -54,7 +55,7 @@ def _render_pdf(digest) -> bytes:
     from app.config import settings
 
     title = digest.title or "Info Platform Digest"
-    body_md = digest.summary_md or ""
+    body_md = normalize_markdown_source_links(digest.summary_md) or ""
     body_html = md_lib.markdown(body_md, extensions=["tables", "fenced_code"])
 
     html = f"""<!DOCTYPE html>
@@ -130,7 +131,7 @@ def _build_epub(digest) -> bytes:
     from ebooklib import epub
 
     title = digest.title or "Info Platform Digest"
-    body_md = digest.summary_md or ""
+    body_md = normalize_markdown_source_links(digest.summary_md) or ""
     body_html = md_lib.markdown(body_md, extensions=["tables", "fenced_code"])
     keywords = digest.keywords_used or []
 
@@ -307,7 +308,7 @@ def _create_notion_page(token: str, database_id: str, digest) -> str:
 
     title = digest.title or "Info Platform Digest"
     keywords = digest.keywords_used or []
-    summary_md = digest.summary_md or ""
+    summary_md = normalize_markdown_source_links(digest.summary_md) or ""
     created_at = digest.created_at.isoformat() if digest.created_at else ""
 
     # Split summary into chunks (Notion API has 2000-char limit per block)

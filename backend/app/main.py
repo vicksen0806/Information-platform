@@ -8,20 +8,15 @@ from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.database import engine, Base
 from app.core.limiter import limiter
-from app.routers import auth, sources, keywords, crawl_jobs, digests, settings as settings_router, admin, public as public_router
+from app.routers import auth, keywords, crawl_jobs, digests, settings as settings_router, admin, public as public_router
 from app.routers import stats as stats_router
 from app.routers import export as export_router
-from app.routers import push as push_router
 # Import new models so SQLAlchemy registers them with Base.metadata
-import app.models.user_schedule_config  # noqa: F401
 import app.models.user_notification_config  # noqa: F401
-import app.models.user_email_config  # noqa: F401
 import app.models.digest_feedback  # noqa: F401
 import app.models.digest_star  # noqa: F401
-import app.models.notification_route  # noqa: F401
 import app.models.audit_log  # noqa: F401
 import app.models.user_notion_config  # noqa: F401
-import app.models.push_subscription  # noqa: F401
 
 
 @asynccontextmanager
@@ -45,6 +40,9 @@ async def lifespan(app: FastAPI):
         ))
         await conn.execute(text(
             "ALTER TABLE user_llm_configs ADD COLUMN IF NOT EXISTS embedding_model VARCHAR(100)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE crawl_jobs ADD COLUMN IF NOT EXISTS summary_expected BOOLEAN NOT NULL DEFAULT FALSE"
         ))
 
     # pgvector — vector similarity search (graceful fallback if not installed)
@@ -150,7 +148,6 @@ app.add_middleware(
 API_PREFIX = "/api/v1"
 
 app.include_router(auth.router, prefix=API_PREFIX)
-app.include_router(sources.router, prefix=API_PREFIX)
 app.include_router(keywords.router, prefix=API_PREFIX)
 app.include_router(crawl_jobs.router, prefix=API_PREFIX)
 app.include_router(digests.router, prefix=API_PREFIX)
@@ -159,7 +156,6 @@ app.include_router(admin.router, prefix=API_PREFIX)
 app.include_router(public_router.router, prefix=API_PREFIX)
 app.include_router(stats_router.router, prefix=API_PREFIX)
 app.include_router(export_router.router, prefix=API_PREFIX)
-app.include_router(push_router.router, prefix=API_PREFIX)
 
 
 @app.get("/health")

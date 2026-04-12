@@ -7,7 +7,7 @@
 - 这里记录“当前有效”的产品规则、页面现状和开发约定。
 - 如果这里的内容和旧代码注释、旧文档冲突，以本文件为准。
 
-更新日期：2026-04-06
+更新日期：2026-04-08
 
 ## 当前导航
 
@@ -55,7 +55,6 @@
   - 账户
   - LLM 基础配置
   - Webhook 通知
-  - Email
   - API 用量
 - 当前已删除模块：
   - 向量搜索（语义搜索）
@@ -94,9 +93,33 @@
 - 抓取：requests + BeautifulSoup + readability-lxml + feedparser
 - LLM：OpenAI SDK 兼容接口
 
+## 本地开发方式（Mac 专用，完全原生）
+
+- **全部原生运行，不使用 Docker**
+- 基础设施由 `brew services` 管理（开机自启）：postgresql@16、redis
+- 应用服务由 `start.sh` 管理：playwright、backend、worker、frontend
+- 一键脚本：`start.sh`
+
+```
+./start.sh setup   # 首次：安装 postgres/redis、创建 venv、安装依赖
+./start.sh         # 日常启动所有服务
+./start.sh stop    # 停止应用进程（postgres/redis 保持运行）
+./start.sh status  # 查看运行状态
+```
+
+- Worker 本地并发固定为 `--concurrency=1`（节省内存）
+- 日志输出到 `logs/` 目录（playwright.log / backend.log / worker.log / frontend.log）
+- `PLAYWRIGHT_URL=http://localhost:3001`（.env 已配置）
+- Python 虚拟环境位于 `backend/venv/`（已加入 .gitignore）
+- Playwright 微服务代码位于 `docker/playwright/main.py`，使用 backend venv 运行
+
+## 生产/云服务器部署
+
+使用原始 `docker-compose.yml`（全量 Docker），不使用 `docker-compose.dev.yml`。
+
 ## 安全与基础约定
 
-- LLM API Key 和 SMTP 密码加密存储，不明文返回。
+- LLM API Key 加密存储，不明文返回。
 - JWT 使用 httpOnly cookie。
 - FastAPI 使用 asyncpg；Celery worker 使用 psycopg2。
 - 数据库仍有部分 schema 变更未完全转成 Alembic migration，生产前需要补齐。

@@ -12,11 +12,12 @@ class CrawlJob(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")  # pending | running | completed | failed
-    triggered_by: Mapped[str] = mapped_column(String(30), nullable=False, default="manual")  # schedule | manual
+    triggered_by: Mapped[str] = mapped_column(String(30), nullable=False, default="manual")  # manual | admin
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_content_found: Mapped[bool] = mapped_column(default=False, nullable=False)
+    summary_expected: Mapped[bool] = mapped_column(default=False, nullable=False)
     digest_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
