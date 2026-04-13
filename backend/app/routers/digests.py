@@ -3,7 +3,7 @@ import re
 from datetime import timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, func, String, update
+from sqlalchemy import select, or_, func, String, update, delete
 from pydantic import BaseModel
 
 from app.database import get_db
@@ -13,6 +13,7 @@ from app.models.user import User
 from app.models.digest import Digest
 from app.models.digest_feedback import DigestFeedback
 from app.models.digest_star import DigestStar
+from app.models.keyword import Keyword
 from app.core.dependencies import get_current_user
 from app.services.text_service import (
     localize_digest_text,
@@ -36,6 +37,16 @@ router = APIRouter(prefix="/digests", tags=["digests"])
 
 class FeedbackCreate(BaseModel):
     value: str  # 'positive' | 'negative'
+
+
+class ClearKeywordHistoryResponse(BaseModel):
+    deleted_days: int
+    deleted_results: int
+    deleted_jobs: int
+
+
+class ClearAllKeywordHistoryResponse(ClearKeywordHistoryResponse):
+    deleted_keywords: int
 
 
 def _normalize_keyword_label(keyword: str | None) -> str:
@@ -309,20 +320,20 @@ async def _build_keyword_cards(db: AsyncSession, digest: Digest) -> list[DigestK
         if row.keyword_text
     }
     sections = _split_digest_keyword_sections(digest.summary_md)
-
-    ordered_keywords: list[str] = []
-    for keyword in (digest.keywords_used or []):
-        keyword = _normalize_keyword_label(keyword)
-        if keyword not in ordered_keywords:
-            ordered_keywords.append(keyword)
-    for keyword in sections:
-        keyword = _normalize_keyword_label(keyword)
-        if keyword not in ordered_keywords:
-            ordered_keywords.append(keyword)
-    for keyword in crawl_map:
-        keyword = _normalize_keyword_label(keyword)
-        if keyword not in ordered_keywords:
-            ordered_keywords.append(keyword)
+    ordered_keywords = await _job_keywords_for_crawl_job(db, digest.crawl_job_id)
+    if not ordered_keywords:
+        for keyword in (digest.keywords_used or []):
+            keyword = _normalize_keyword_label(keyword)
+            if keyword and keyword not in ordered_keywords:
+                ordered_keywords.append(keyword)
+        for keyword in sections:
+            keyword = _normalize_keyword_label(keyword)
+            if keyword and keyword not in ordered_keywords:
+                ordered_keywords.append(keyword)
+        for keyword in crawl_map:
+            keyword = _normalize_keyword_label(keyword)
+            if keyword and keyword not in ordered_keywords:
+                ordered_keywords.append(keyword)
 
     cards: list[DigestKeywordCard] = []
     for keyword in ordered_keywords:
@@ -371,6 +382,23 @@ def _localize_keyword_cards(cards: list[DigestKeywordCard], ui_language: str) ->
         )
         for card in cards
     ]
+
+
+async def _job_keywords_for_crawl_job(db: AsyncSession, crawl_job_id) -> list[str]:
+    rows = (
+        await db.execute(
+            select(CrawlResult.keyword_text, CrawlResult.crawled_at)
+            .where(CrawlResult.crawl_job_id == crawl_job_id, CrawlResult.keyword_text.isnot(None))
+            .order_by(CrawlResult.crawled_at.asc())
+        )
+    ).all()
+
+    ordered_keywords: list[str] = []
+    for row in rows:
+        keyword = _normalize_keyword_label(row.keyword_text)
+        if keyword and keyword not in ordered_keywords:
+            ordered_keywords.append(keyword)
+    return ordered_keywords
 
 
 @router.get("/keywords", response_model=list[KeywordHistorySummary])
@@ -476,6 +504,144 @@ async def get_keyword_history(
             break
 
     return entries
+
+
+async def _clear_keyword_history_impl(
+    db: AsyncSession,
+    user_id,
+    *,
+    keyword: str | None = None,
+) -> tuple[int, int, int, int]:
+    rows = (
+        await db.execute(
+            select(CrawlResult.id, CrawlResult.crawl_job_id, CrawlResult.crawled_at, CrawlResult.keyword_text)
+            .join(CrawlJob, CrawlJob.id == CrawlResult.crawl_job_id)
+            .where(
+                CrawlJob.user_id == user_id,
+            )
+        )
+    ).all()
+    if keyword is not None:
+        rows = [row for row in rows if row.keyword_text == keyword]
+
+    if not rows:
+        if keyword is None:
+            await db.execute(
+                update(Keyword)
+                .where(Keyword.user_id == user_id)
+                .values(last_crawled_at=None)
+            )
+            await db.commit()
+            return 0, 0, 0, 0
+
+        keyword_row = (
+            await db.execute(
+                select(Keyword).where(
+                    Keyword.user_id == user_id,
+                    Keyword.text == keyword,
+                )
+            )
+        ).scalar_one_or_none()
+        if keyword_row and keyword_row.last_crawled_at is not None:
+            keyword_row.last_crawled_at = None
+            await db.commit()
+        return 0, 0, 0, 0
+
+    result_ids = [row.id for row in rows]
+    affected_job_ids = {row.crawl_job_id for row in rows}
+    deleted_days = len({row.crawled_at.astimezone(timezone.utc).date().isoformat() for row in rows})
+    affected_keywords = sorted({(row.keyword_text or "").strip() for row in rows if (row.keyword_text or "").strip()})
+
+    await db.execute(delete(CrawlResult).where(CrawlResult.id.in_(result_ids)))
+
+    remaining_rows = (
+        await db.execute(
+            select(CrawlResult.crawl_job_id, func.count(CrawlResult.id))
+            .where(CrawlResult.crawl_job_id.in_(affected_job_ids))
+            .group_by(CrawlResult.crawl_job_id)
+        )
+    ).all()
+    remaining_counts = {row[0]: row[1] for row in remaining_rows}
+    orphan_job_ids = [job_id for job_id in affected_job_ids if remaining_counts.get(job_id, 0) == 0]
+
+    if orphan_job_ids:
+        await db.execute(
+            delete(CrawlJob).where(
+                CrawlJob.user_id == user_id,
+                CrawlJob.id.in_(orphan_job_ids),
+            )
+        )
+
+    if keyword is None:
+        await db.execute(
+            update(Keyword)
+            .where(Keyword.user_id == user_id)
+            .values(last_crawled_at=None)
+        )
+    else:
+        latest_remaining_crawled_at = (
+            await db.execute(
+                select(CrawlResult.crawled_at)
+                .join(CrawlJob, CrawlJob.id == CrawlResult.crawl_job_id)
+                .where(
+                    CrawlJob.user_id == user_id,
+                    CrawlResult.keyword_text == keyword,
+                )
+                .order_by(CrawlResult.crawled_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+        keyword_row = (
+            await db.execute(
+                select(Keyword).where(
+                    Keyword.user_id == user_id,
+                    Keyword.text == keyword,
+                )
+            )
+        ).scalar_one_or_none()
+        if keyword_row:
+            keyword_row.last_crawled_at = latest_remaining_crawled_at
+
+    await db.commit()
+    return deleted_days, len(result_ids), len(orphan_job_ids), len(affected_keywords)
+
+
+@router.delete("/keywords/history/all", response_model=ClearAllKeywordHistoryResponse)
+async def clear_all_keyword_history(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    deleted_days, deleted_results, deleted_jobs, deleted_keywords = await _clear_keyword_history_impl(
+        db,
+        current_user.id,
+        keyword=None,
+    )
+    return ClearAllKeywordHistoryResponse(
+        deleted_days=deleted_days,
+        deleted_results=deleted_results,
+        deleted_jobs=deleted_jobs,
+        deleted_keywords=deleted_keywords,
+    )
+
+
+@router.delete("/keywords/{keyword}/history", response_model=ClearKeywordHistoryResponse)
+async def clear_keyword_history(
+    keyword: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    deleted_days, deleted_results, deleted_jobs, _ = await _clear_keyword_history_impl(
+        db,
+        current_user.id,
+        keyword=keyword,
+    )
+
+    return ClearKeywordHistoryResponse(
+        deleted_days=deleted_days,
+        deleted_results=deleted_results,
+        deleted_jobs=deleted_jobs,
+    )
 
 
 # ── Semantic search ───────────────────────────────────────────────────────────
@@ -792,6 +958,9 @@ async def get_digest(
     )
     is_starred = star_result.scalar_one_or_none() is not None
     response = DigestResponse.model_validate(digest)
+    actual_job_keywords = await _job_keywords_for_crawl_job(db, digest.crawl_job_id)
+    if actual_job_keywords:
+        response.keywords_used = actual_job_keywords
     response.title = localize_digest_text(response.title, current_user.ui_language)
     response.summary_md = normalize_markdown_source_links(
         localize_digest_text(response.summary_md, current_user.ui_language) or response.summary_md

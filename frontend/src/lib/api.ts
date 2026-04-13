@@ -88,6 +88,16 @@ export const digestsApi = {
     request<KeywordHistorySummary[]>(`/digests/keywords${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   keywordHistory: (keyword: string, limit = 30) =>
     request<KeywordHistoryEntry[]>(`/digests/keywords/${encodeURIComponent(keyword)}/history?limit=${limit}`),
+  clearKeywordHistory: (keyword: string) =>
+    request<{ deleted_days: number; deleted_results: number; deleted_jobs: number }>(
+      `/digests/keywords/${encodeURIComponent(keyword)}/history`,
+      { method: "DELETE" },
+    ),
+  clearAllKeywordHistory: () =>
+    request<{ deleted_days: number; deleted_results: number; deleted_jobs: number; deleted_keywords: number }>(
+      "/digests/keywords/history/all",
+      { method: "DELETE" },
+    ),
   get: (id: string) => request<Digest>(`/digests/${id}`),
   usage: () => request<UsageStats>("/digests/usage"),
   markRead: (id: string, is_read: boolean) =>

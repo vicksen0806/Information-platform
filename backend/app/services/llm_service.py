@@ -2,6 +2,7 @@ from openai import OpenAI
 from app.config import settings
 from app.schemas.llm_config import LlmTestResult
 from app.services.text_service import localize_digest_text, normalize_markdown_source_links
+import re
 
 
 def _truncate_keyword_content(raw: str, style: str) -> str:
@@ -9,9 +10,9 @@ def _truncate_keyword_content(raw: str, style: str) -> str:
         return ""
 
     limit_by_style = {
-        "concise": 2200,
-        "detailed": 3200,
-        "academic": 3600,
+        "concise": 1800,
+        "detailed": 2400,
+        "academic": 2800,
     }
     limit = limit_by_style.get(style, 2600)
     if len(raw) <= limit:
@@ -24,13 +25,13 @@ def _truncate_keyword_content(raw: str, style: str) -> str:
 
 def _digest_max_tokens(style: str, keyword_count: int) -> int:
     base_by_style = {
-        "concise": 700,
-        "detailed": 1100,
-        "academic": 1300,
+        "concise": 650,
+        "detailed": 900,
+        "academic": 1100,
     }
     base = base_by_style.get(style, 900)
-    extra = max(0, keyword_count - 1) * 220
-    return min(base + extra, 1800)
+    extra = max(0, keyword_count - 1) * 160
+    return min(base + extra, 1500)
 
 
 def _build_client(config) -> OpenAI:
@@ -182,9 +183,13 @@ def recommend_keywords_sync(
         "要求：\n"
         "1. 推荐范围要覆盖用户近半个月的整体关注面，不要只围绕当前已选的少数关键词做近义词扩写\n"
         "2. 推荐词不能与“当前已选关键词”重复，也尽量不要只是简单加前后缀的变体\n"
-        "3. 优先推荐更具体、可持续跟踪、有信息增量的主题词\n"
-        "4. 每个推荐词附上一句简短理由（≤20字）\n"
-        "5. 严格按以下JSON格式输出，不要其他内容：\n"
+        "3. 推荐结果必须是“关键词”，不是句子、不是新闻标题、不是问题句、不是完整事件描述\n"
+        "4. 关键词风格要像用户手动输入的词条，优先使用 2-5 个字的短词；最多不超过 6 个汉字\n"
+        "5. 不要输出带“最新、解读、攻略、案例、趋势、政策、指南、盘点、汇总、预防、入门、学习、常见”等标题味很重的长短语\n"
+        "6. 不要输出带标点、空格、顿号、逗号、冒号、括号的文本\n"
+        "7. 优先推荐更具体、可持续跟踪、有信息增量的主题词\n"
+        "8. 每个推荐词附上一句简短理由（≤12字）\n"
+        "9. 严格按以下JSON格式输出，不要其他内容：\n"
         '[{"text": "关键词1", "reason": "理由"}, {"text": "关键词2", "reason": "理由"}, ...]'
     )
     try:
@@ -195,20 +200,73 @@ def recommend_keywords_sync(
             max_tokens=500,
             timeout=30,
         )
-        import json, re
+        import json
         raw = response.choices[0].message.content or ""
         # Extract JSON array from response
         match = re.search(r"\[.*\]", raw, re.DOTALL)
         if not match:
             return []
         items = json.loads(match.group())
-        return [
-            {"text": str(item.get("text", ""))[:100], "reason": str(item.get("reason", ""))[:100]}
-            for item in items
-            if item.get("text")
-        ][:10]
+
+        existing = {kw.strip().lower() for kw in (active_keywords or []) if kw and kw.strip()}
+        cleaned: list[dict] = []
+        seen: set[str] = set()
+
+        for item in items:
+            keyword = _normalize_recommended_keyword(str(item.get("text", "")))
+            if not keyword:
+                continue
+
+            lowered = keyword.lower()
+            if lowered in existing or lowered in seen:
+                continue
+
+            reason = _normalize_recommendation_reason(str(item.get("reason", "")))
+            cleaned.append({"text": keyword, "reason": reason})
+            seen.add(lowered)
+
+            if len(cleaned) >= 10:
+                break
+
+        return cleaned
     except Exception:
         return []
+
+
+def _normalize_recommended_keyword(value: str) -> str | None:
+    text = re.sub(r"\s+", "", (value or "").strip())
+    text = re.sub(r"^[#*`\-_.:：、，,;；]+", "", text)
+    text = re.sub(r"[#*`]", "", text)
+    text = re.sub(r"[。！？!?,，；;:：、“”\"'‘’（）()\\[\\]{}<>《》/\\\\]", "", text)
+
+    if not text:
+        return None
+    if any(ch.isspace() for ch in text):
+        return None
+
+    banned_terms = (
+        "最新", "解读", "攻略", "案例", "趋势", "政策", "指南", "盘点", "汇总",
+        "预防", "入门", "学习", "常见", "推荐", "分析", "观察", "教程", "总结",
+        "应用场景", "最新政策", "研究成果",
+    )
+    if any(term in text for term in banned_terms):
+        return None
+
+    if len(re.findall(r"[\u4e00-\u9fff]", text)) > 6:
+        return None
+    if len(text) > 12:
+        return None
+
+    if re.search(r"(如何|为什么|怎么|哪些|什么|是否)", text):
+        return None
+
+    return text
+
+
+def _normalize_recommendation_reason(value: str) -> str:
+    text = re.sub(r"\s+", " ", (value or "").strip())
+    text = text.replace("\n", " ")
+    return text[:24] or "相关趋势延伸"
 
 
 async def test_llm_connection(config) -> LlmTestResult:

@@ -59,8 +59,8 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
     """
     Core crawl task:
     1. Create or reuse a CrawlJob row
-    2. Fetch all active sources for the user
-    3. Store CrawlResult for each (skip if content unchanged)
+    2. Fetch all active keywords for the user
+    3. Store CrawlResult for each keyword (skip if content unchanged)
     4. Chain into generate_digest
     """
     import urllib.parse
@@ -131,7 +131,6 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
             if latest_today:
                 reused_result = CrawlResult(
                     crawl_job_id=job.id,
-                    source_id=latest_today.source_id,
                     keyword_text=kw.text,
                     raw_content=latest_today.raw_content,
                     content_hash=latest_today.content_hash,
@@ -170,7 +169,6 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
             if error or not content:
                 result = CrawlResult(
                     crawl_job_id=job.id,
-                    source_id=None,
                     keyword_text=kw.text,
                     http_status=http_status,
                     error_message=error or "Empty content",
@@ -184,7 +182,6 @@ def run_crawl_job(self, job_id: str | None, user_id: str, triggered_by: str = "m
             has_digest_input = True
             result = CrawlResult(
                 crawl_job_id=job.id,
-                source_id=None,
                 keyword_text=kw.text,
                 raw_content=content,
                 content_hash=content_hash,

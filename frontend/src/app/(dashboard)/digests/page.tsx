@@ -54,6 +54,10 @@ function DigestsContent() {
   const [historyEntries, setHistoryEntries] = useState<KeywordHistoryEntry[]>([]);
   const [loadingKeywords, setLoadingKeywords] = useState(true);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [clearingHistory, setClearingHistory] = useState(false);
+  const [clearingAllHistory, setClearingAllHistory] = useState(false);
+  const [historyMessage, setHistoryMessage] = useState("");
+  const [historyError, setHistoryError] = useState("");
   const [query, setQuery] = useState("");
 
   useEffect(() => {
@@ -91,13 +95,93 @@ function DigestsContent() {
     router.push(`/digests?keyword=${encodeURIComponent(keyword)}`);
   }
 
+  async function handleClearHistory() {
+    if (!selectedKeyword) return;
+    if (!confirm(t("digests_clear_history_confirm", { kw: selectedKeyword }))) return;
+
+    setClearingHistory(true);
+    setHistoryError("");
+    setHistoryMessage("");
+
+    try {
+      await digestsApi.clearKeywordHistory(selectedKeyword);
+      const refreshedKeywords = await digestsApi.listKeywords();
+      setKeywords(refreshedKeywords);
+      setHistoryEntries([]);
+      setHistoryMessage(t("digests_clear_history_done", { kw: selectedKeyword }));
+
+      const term = query.trim().toLowerCase();
+      const visibleKeywords = term
+        ? refreshedKeywords.filter((item) => item.keyword.toLowerCase().includes(term))
+        : refreshedKeywords;
+      const nextKeyword = visibleKeywords[0]?.keyword || refreshedKeywords[0]?.keyword || "";
+
+      if (nextKeyword) {
+        router.replace(`/digests?keyword=${encodeURIComponent(nextKeyword)}`);
+      } else {
+        router.replace("/digests");
+      }
+    } catch (err: any) {
+      setHistoryError(err.message || t("digests_clear_history"));
+    } finally {
+      setClearingHistory(false);
+    }
+  }
+
+  async function handleClearAllHistory() {
+    if (!keywords.length) return;
+    if (!confirm(t("digests_clear_all_history_confirm"))) return;
+
+    setClearingAllHistory(true);
+    setHistoryError("");
+    setHistoryMessage("");
+
+    try {
+      await digestsApi.clearAllKeywordHistory();
+      setKeywords([]);
+      setHistoryEntries([]);
+      setQuery("");
+      setHistoryMessage(t("digests_clear_all_history_done"));
+      router.replace("/digests");
+    } catch (err: any) {
+      setHistoryError(err.message || t("digests_clear_all_history"));
+    } finally {
+      setClearingAllHistory(false);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-5xl p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">{t("digests_title")}</h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          {selectedKeyword ? t("digests_subtitle_kw", { kw: selectedKeyword }) : t("digests_subtitle_all")}
-        </p>
+      <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">{t("digests_title")}</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            {selectedKeyword ? t("digests_subtitle_kw", { kw: selectedKeyword }) : t("digests_subtitle_all")}
+          </p>
+        </div>
+        <div className="flex flex-col items-start gap-2 md:items-end">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleClearHistory}
+              disabled={!selectedKeyword || loadingHistory || clearingHistory || clearingAllHistory || historyEntries.length === 0}
+              className="rounded-md border border-destructive/30 px-4 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {clearingHistory ? t("digests_clearing_history") : t("digests_clear_history")}
+            </button>
+            <button
+              type="button"
+              onClick={handleClearAllHistory}
+              disabled={loadingKeywords || clearingHistory || clearingAllHistory || keywords.length === 0}
+              className="rounded-md border border-destructive/30 px-4 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {clearingAllHistory ? t("digests_clearing_history") : t("digests_clear_all_history")}
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {selectedKeyword ? t("digests_clear_history_hint") : t("digests_clear_all_history_hint")}
+          </p>
+        </div>
       </div>
 
       <div className="mb-6 rounded-2xl border border-border bg-background p-4 shadow-sm">
@@ -176,6 +260,17 @@ function DigestsContent() {
             </p>
           </div>
         </div>
+
+        {historyMessage && (
+          <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+            {historyMessage}
+          </div>
+        )}
+        {historyError && (
+          <div className="rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            {historyError}
+          </div>
+        )}
 
         {!selectedKeyword ? (
           <div className="rounded-2xl border border-dashed border-border bg-background px-4 py-12 text-center text-sm text-muted-foreground">

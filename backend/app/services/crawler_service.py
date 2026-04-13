@@ -11,6 +11,7 @@ Key improvements over v1:
 - Skips social media and other unscrapable domains gracefully
 """
 import hashlib
+import logging
 import time
 import random
 import threading
@@ -28,7 +29,9 @@ from readability import Document
 CONNECT_TIMEOUT = 8    # seconds to establish TCP connection
 READ_TIMEOUT = 25      # seconds to receive full response
 MAX_ARTICLE_CHARS = 3000   # max chars kept per individual article
-MAX_ARTICLES_PER_FEED = 12  # max articles fetched per RSS feed
+MAX_ARTICLES_PER_FEED = 8   # hard ceiling for articles fetched per RSS feed
+MIN_ARTICLES_PER_FEED = 4   # fetch at least a few entries for diversity
+TARGET_FEED_CHARS = 3600    # stop early once we have enough signal for summarization
 
 # Domains that block scrapers or return nothing useful
 _SKIP_DOMAINS = {
@@ -40,6 +43,10 @@ _SKIP_DOMAINS = {
 # Per-domain rate limiting state
 _domain_last_request: dict[str, float] = {}
 _rate_lock = threading.Lock()
+
+# readability emits noisy "ruthless removal did not work." info logs on some pages.
+# Keep the extractor available but do not flood worker logs.
+logging.getLogger("readability.readability").setLevel(logging.WARNING)
 
 # ── User-Agent pool ────────────────────────────────────────────────────────────
 
@@ -236,8 +243,9 @@ def _extract_rss_content(feed_url: str) -> tuple[str, int]:
 
     session = _make_session(proxy_url=_get_random_proxy())
     parts = []
+    total_chars = 0
 
-    for entry in entries:
+    for idx, entry in enumerate(entries, start=1):
         title = (entry.get("title", "") or "").strip()
         link = (entry.get("link", "") or "").strip()
         summary = entry.get("summary", "") or entry.get("description", "")
@@ -261,7 +269,12 @@ def _extract_rss_content(feed_url: str) -> tuple[str, int]:
             body = ""
 
         if title or body:
-            parts.append(f"## {title}\n{body}\nSource: {source_url}")
+            part = f"## {title}\n{body}\nSource: {source_url}"
+            parts.append(part)
+            total_chars += len(title) + len(body)
+
+        if idx >= MIN_ARTICLES_PER_FEED and total_chars >= TARGET_FEED_CHARS:
+            break
 
     content = "\n\n---\n\n".join(parts)
     return content, 200

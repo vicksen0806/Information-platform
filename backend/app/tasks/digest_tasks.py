@@ -76,6 +76,18 @@ def generate_digest(self, job_id: str, user_id: str):
             _mark_job_finished(digest_error="未配置 LLM，请在系统设置中填写 API Key")
             return
 
+        all_job_results = db.execute(
+            select(CrawlResult.keyword_text, CrawlResult.crawled_at)
+            .where(CrawlResult.crawl_job_id == job_uuid)
+            .order_by(CrawlResult.crawled_at.asc())
+        ).all()
+
+        job_keyword_texts: list[str] = []
+        for row in all_job_results:
+            keyword_text = (row.keyword_text or "").strip()
+            if keyword_text and keyword_text not in job_keyword_texts:
+                job_keyword_texts.append(keyword_text)
+
         # Load crawl results with actual content
         rows = db.execute(
             select(CrawlResult)
@@ -83,20 +95,19 @@ def generate_digest(self, job_id: str, user_id: str):
                 CrawlResult.crawl_job_id == job_uuid,
                 CrawlResult.raw_content.isnot(None),
             )
+            .order_by(CrawlResult.crawled_at.asc())
         ).scalars().all()
 
         if not rows:
             _mark_job_finished()
             return  # Nothing to summarize
 
-        # Load active keywords (for group mapping and prompt context)
         keywords = db.execute(
             select(Keyword).where(
                 Keyword.user_id == user_uuid,
-                Keyword.is_active == True,
+                Keyword.text.in_(job_keyword_texts),
             )
         ).scalars().all()
-        keyword_texts = [kw.text for kw in keywords]
         kw_group_map = {kw.text: kw.group_name for kw in keywords}
 
         # Group content by keyword so LLM receives per-keyword sections
@@ -138,7 +149,7 @@ def generate_digest(self, job_id: str, user_id: str):
 
         # Call LLM
         try:
-            result = generate_digest_sync(llm_config, keyword_texts, crawled_contents, feedback_hint=feedback_hint, ui_language=ui_language)
+            result = generate_digest_sync(llm_config, job_keyword_texts, crawled_contents, feedback_hint=feedback_hint, ui_language=ui_language)
         except Exception as exc:
             from openai import AuthenticationError as OpenAIAuthError, RateLimitError as OpenAIRateLimitError
 
@@ -169,7 +180,7 @@ def generate_digest(self, job_id: str, user_id: str):
         if existing_digest:
             existing_digest.title = result["title"]
             existing_digest.summary_md = result["summary_md"]
-            existing_digest.keywords_used = keyword_texts
+            existing_digest.keywords_used = job_keyword_texts
             existing_digest.sources_count = len(crawled_contents)
             existing_digest.tokens_used = result["tokens_used"]
             existing_digest.llm_model = result["llm_model"]
@@ -181,7 +192,7 @@ def generate_digest(self, job_id: str, user_id: str):
                 crawl_job_id=job_uuid,
                 title=result["title"],
                 summary_md=result["summary_md"],
-                keywords_used=keyword_texts,
+                keywords_used=job_keyword_texts,
                 sources_count=len(crawled_contents),
                 tokens_used=result["tokens_used"],
                 llm_model=result["llm_model"],
@@ -240,4 +251,4 @@ def generate_digest(self, job_id: str, user_id: str):
 
         # Global webhook (with simple retry)
         if notif_config and should_notify:
-            _send_with_retry(send_digest_notification, notif_config, keyword_texts, final_summary, created_str)
+            _send_with_retry(send_digest_notification, notif_config, job_keyword_texts, final_summary, created_str)

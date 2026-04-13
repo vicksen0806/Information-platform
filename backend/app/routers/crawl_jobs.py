@@ -24,23 +24,10 @@ async def _with_digest_flag(jobs: list[CrawlJob], db: AsyncSession) -> list[Craw
     )
     digest_map = {row[0]: (str(row[1]), row[2]) for row in result.all()}
 
-    user_ids = list({j.user_id for j in jobs})
-    latest_digest_rows = await db.execute(
-        select(Digest.user_id, Digest.id, Digest.created_at)
-        .where(Digest.user_id.in_(user_ids))
-        .order_by(Digest.created_at.desc())
-    )
-    latest_digest_by_user: dict = {}
-    for row in latest_digest_rows.all():
-        if row[0] not in latest_digest_by_user:
-            latest_digest_by_user[row[0]] = (str(row[1]), row[2])
-
     responses = []
     for job in jobs:
         r = CrawlJobResponse.model_validate(job)
         digest_entry = digest_map.get(job.id)
-        if digest_entry is None and job.status == "completed" and not job.new_content_found:
-            digest_entry = latest_digest_by_user.get(job.user_id)
         r.has_digest = digest_entry is not None
         r.digest_id = digest_entry[0] if digest_entry else None
         r.digest_created_at = digest_entry[1] if digest_entry else None

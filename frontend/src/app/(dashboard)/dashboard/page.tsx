@@ -235,7 +235,7 @@ export default function DashboardPage() {
 
   async function handleDeleteKeyword(id: string) {
     await keywordsApi.delete(id);
-    setKeywords((prev) => prev.filter((item) => item.id !== id));
+    await loadKeywords();
   }
 
   async function handleAddHistoricalKeyword(text: string) {
